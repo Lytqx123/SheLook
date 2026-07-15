@@ -1,0 +1,171 @@
+# ============================================================
+# SheLook Git 忽略规则
+#
+# 组织顺序: 操作系统 → IDE/编辑器 → 环境变量 → 前端
+#           → Python → 虚拟环境 → 日志 → 构建产物
+#           → Docker 数据 → Celery → AI 模型 → 临时文件 → 密钥
+# ============================================================
+
+
+# ---- 操作系统 ----
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+
+# ---- IDE 与编辑器 ----
+.vscode/
+.idea/
+.codebuddy/
+.fleet/
+.history/
+.cursor/
+.claude/
+.trae/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+
+# ---- 环境变量 ----
+.env
+secrets/*.pem
+.env.*
+!.env.example
+!.env.*.example
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+
+# ---- Node.js / 前端 ----
+node_modules/
+.pnp/
+.pnp.js
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+.npm/
+.next/
+.turbo/
+out/
+.vercel/
+*.tsbuildinfo
+.eslintcache
+
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+.tox/
+.nox/
+*.so
+*.manifest
+*.spec
+pip-wheel-metadata/
+
+
+# ---- 虚拟环境与包管理器 ----
+venv/
+.venv/
+env/
+.conda/
+.uv-cache/
+
+
+# ---- 日志 ----
+logs/
+*.log
+*.log.*
+supervisord.log
+celeryd.log
+*.pid
+
+
+# ---- 构建与分发 ----
+dist/
+build/
+*.tar.gz
+*.whl
+*.dmg
+*.exe
+
+
+# ---- Docker 持久化数据（本地开发） ----
+pgdata/
+minio_data/
+redis_data/
+sd_models/
+
+
+# ---- Celery Beat 运行时文件 ----
+celerybeat-schedule
+celerybeat-schedule-shm
+celerybeat-schedule-wal
+celerybeat.pid
+
+
+# ---- AI 模型文件 ----
+*.pt
+*.bin
+*.safetensors
+*.pkl
+*.ckpt
+*.onnx
+*.gguf
+*.h5
+/models/
+/backend/models/
+checkpoints/
+outputs/
+loras/
+embeddings/
+hf_cache/
+.cache/huggingface/
+
+
+# ---- 临时文件 ----
+tmp/
+temp/
+*.tmp
+*.bak
+*.orig
+*.rej
+*.cache
+
+
+# ---- 密钥与证书 ----
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+secrets/

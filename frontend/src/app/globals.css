@@ -1,0 +1,362 @@
+@import "tailwindcss";
+
+:root {
+  --office-ink: #172033;
+  --office-ink-muted: #657084;
+  --office-blue: #2563eb;
+  --office-blue-strong: #1d4ed8;
+  --office-canvas: #f5f7fb;
+  --office-panel: #ffffff;
+  --office-line: #e5eaf2;
+  --office-sidebar: #101827;
+  --office-sidebar-muted: #92a0b8;
+}
+
+* { box-sizing: border-box; }
+
+html { background: var(--office-canvas); }
+
+body {
+  margin: 0;
+  min-width: 320px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--office-canvas);
+  color: var(--office-ink);
+}
+
+button, input, textarea, select { font: inherit; }
+
+::selection { background: rgba(37, 99, 235, 0.16); color: var(--office-ink); }
+
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #c7d0de; border: 2px solid transparent; border-radius: 99px; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background-color: #a9b5c7; }
+
+/* 应用外壳 */
+.office-shell { min-height: 100vh; background: var(--office-canvas); }
+
+.office-sider {
+  position: fixed !important;
+  inset: 0 auto 0 0;
+  z-index: 20;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--office-sidebar) !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 8px 0 24px rgba(15, 23, 42, 0.08);
+}
+
+.office-sider .ant-layout-sider-children {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+}
+
+.office-brand {
+  display: flex;
+  min-height: 76px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 18px 0 22px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.ant-layout-sider-collapsed .office-brand { justify-content: center; padding: 0; }
+
+.office-collapse-button {
+  color: #8c9ab2 !important;
+  border-radius: 8px !important;
+}
+
+.office-collapse-button:hover { color: #ffffff !important; background: rgba(255, 255, 255, 0.08) !important; }
+
+.office-nav-label {
+  padding: 20px 24px 7px;
+  color: #61708b;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.ant-layout-sider-collapsed .office-nav-label { visibility: hidden; height: 10px; padding: 16px 0 0; }
+
+.office-menu {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 12px 16px !important;
+  background: transparent !important;
+  border-inline-end: 0 !important;
+}
+
+.office-menu.ant-menu-dark .ant-menu-item-group-title {
+  padding: 18px 12px 7px !important;
+  color: #738199 !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+}
+
+.office-menu.ant-menu-dark .ant-menu-item {
+  width: 100% !important;
+  height: 42px;
+  margin: 2px 0 !important;
+  padding-inline: 12px !important;
+  color: var(--office-sidebar-muted);
+  font-size: 13px;
+  line-height: 42px;
+  border-radius: 9px;
+}
+
+.office-menu.ant-menu-dark .ant-menu-item:hover { color: #f8fbff; background: rgba(255, 255, 255, 0.07) !important; }
+
+.office-menu.ant-menu-dark .ant-menu-item-selected {
+  color: #ffffff !important;
+  background: #1f4fbd !important;
+  box-shadow: inset 3px 0 0 #7bb1ff, 0 5px 14px rgba(0, 0, 0, 0.16);
+}
+
+.office-menu.ant-menu-dark .ant-menu-item .ant-menu-item-icon { font-size: 16px; }
+.ant-layout-sider-collapsed .office-menu { padding-inline: 12px !important; }
+.ant-layout-sider-collapsed .office-menu.ant-menu-inline-collapsed > .ant-menu-item { width: 56px !important; padding-inline: 20px !important; }
+
+.office-sider-footer { padding: 12px; border-top: 1px solid rgba(255, 255, 255, 0.07); }
+
+.office-user {
+  display: flex;
+  width: 100%;
+  min-height: 52px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  overflow: hidden;
+  color: #f4f7fb;
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  transition: background 160ms ease;
+}
+
+.office-user:hover { background: rgba(255, 255, 255, 0.07); }
+.office-user--collapsed { justify-content: center; padding: 8px 0; }
+.office-user .ant-avatar { flex: 0 0 auto; background: #2864d7; }
+.office-user__meta { display: grid; min-width: 0; gap: 3px; }
+.office-user__name { overflow: hidden; color: #f1f5fb; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.office-user .ant-tag { width: fit-content; margin: 0; font-size: 10px; line-height: 18px; }
+
+.office-header {
+  position: sticky !important;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  height: 68px !important;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 36px !important;
+  line-height: normal !important;
+  background: rgba(255, 255, 255, 0.94) !important;
+  border-bottom: 1px solid var(--office-line);
+  box-shadow: 0 2px 14px rgba(20, 35, 59, 0.025);
+  backdrop-filter: blur(14px);
+}
+
+.office-header__context { display: flex; align-items: center; gap: 12px; }
+.office-header__context .ant-btn { color: #42516a; }
+.office-header__context strong { display: block; color: #1e293b; font-size: 15px; font-weight: 680; }
+.office-header__eyebrow { display: block; margin-bottom: 3px; color: #8a95a8; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; }
+.office-header__status { display: flex; align-items: center; gap: 10px; color: #8792a4; font-size: 12px; }
+.office-header__status .ant-badge-status-text { color: #657084; font-size: 12px; }
+
+.office-content {
+  min-height: calc(100vh - 68px);
+  padding: 30px 36px 44px;
+  overflow-x: auto;
+  background:
+    radial-gradient(circle at 86% -8%, rgba(37, 99, 235, 0.07), transparent 28rem),
+    var(--office-canvas);
+}
+
+/* 通用页面、卡片和数据密度 */
+.office-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 24px;
+}
+
+.office-page-header__eyebrow { margin-bottom: 7px; color: #8a95a8; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; }
+.office-page-header h1 { margin: 0; color: var(--office-ink); font-size: 25px; font-weight: 700; letter-spacing: -0.025em; line-height: 1.25; }
+.office-page-header p { max-width: 720px; margin: 7px 0 0; color: var(--office-ink-muted); font-size: 14px; line-height: 1.65; }
+.office-page-header__extra { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+
+.ant-card {
+  border-color: var(--office-line) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 1px 2px rgba(20, 35, 59, 0.025), 0 6px 18px rgba(20, 35, 59, 0.025) !important;
+}
+
+.ant-card .ant-card-head { min-height: 56px; padding: 0 22px; border-bottom-color: #edf0f5; }
+.ant-card .ant-card-head-title { color: #26354d; font-weight: 650; }
+.ant-card .ant-card-body { padding: 22px; }
+.ant-card-hoverable:hover { border-color: #bfd4fb !important; box-shadow: 0 10px 24px rgba(25, 65, 130, 0.08) !important; transform: translateY(-1px); transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease; }
+
+.ant-btn { font-weight: 600; box-shadow: none; }
+.ant-btn-primary { box-shadow: 0 5px 12px rgba(37, 99, 235, 0.18); }
+.ant-btn-primary:hover { box-shadow: 0 7px 16px rgba(37, 99, 235, 0.24); }
+.ant-input, .ant-input-affix-wrapper, .ant-select-selector, .ant-picker { border-color: #dce3ed !important; }
+.ant-input:hover, .ant-input-affix-wrapper:hover, .ant-select-selector:hover, .ant-picker:hover { border-color: #9bbcf7 !important; }
+.ant-input:focus, .ant-input-affix-wrapper-focused, .ant-select-focused .ant-select-selector { box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.10) !important; }
+
+.ant-table-wrapper .ant-table { overflow: hidden; color: #2c3a50; background: transparent; border: 0; border-radius: 0; }
+.ant-table-wrapper .ant-table-container { border-inline: 0 !important; }
+.ant-table-wrapper .ant-table-thead > tr > th { padding-top: 11px !important; padding-bottom: 11px !important; color: #6d788b; font-size: 12px; font-weight: 650; letter-spacing: 0.015em; background: #f8fafc !important; border-bottom: 1px solid #e7ebf1 !important; }
+.ant-table-wrapper .ant-table-tbody > tr > td { padding-top: 13px !important; padding-bottom: 13px !important; color: #2c3a50; background: transparent; border-bottom: 1px solid #edf0f4 !important; transition: background 150ms ease; }
+.ant-table-wrapper .ant-table-tbody > tr:last-child > td { border-bottom: 0 !important; }
+.ant-table-wrapper .ant-table-tbody > tr:hover > td { background: #f7faff !important; }
+.ant-table-wrapper .ant-table-cell-row-hover { background: #f7faff !important; }
+.ant-table-wrapper .ant-pagination { margin: 18px 0 0 !important; }
+.ant-table-wrapper .ant-tag { margin-inline-end: 4px; color: #536177; font-size: 11px; background: #f6f8fb; border-color: #e2e8f0; border-radius: 4px; }
+.ant-statistic-title { color: #728096 !important; font-size: 12px !important; font-weight: 600 !important; }
+.ant-statistic-content { color: #1c2b43; font-weight: 700; }
+.ant-statistic-content-value { font-variant-numeric: tabular-nums; letter-spacing: -0.035em; }
+.ant-modal-content { overflow: hidden; border: 1px solid #e9edf3; border-radius: 14px !important; box-shadow: 0 20px 70px rgba(15, 23, 42, 0.20) !important; }
+.ant-modal-header { padding-top: 22px; }
+.ant-steps-item-title { font-weight: 650 !important; }
+
+/* 运营工作台：降低信息块噪音，强化内容层级 */
+.office-workspace { display: grid; gap: 20px; max-width: 1280px; margin: 0 auto; }
+.office-metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.office-metric-card .ant-card-body { min-height: 112px; padding: 18px 20px; }
+.office-metric-card .ant-statistic-content { margin-top: 6px; font-size: 27px; }
+.office-kpi-strip { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.office-kpi-strip__item { min-width: 0; padding: 3px 18px; border-right: 1px solid #edf0f4; }
+.office-kpi-strip__item:first-child { padding-left: 0; }
+.office-kpi-strip__item:last-child { padding-right: 0; border-right: 0; }
+.office-kpi-strip__label { display: block; overflow: hidden; color: #728096; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.office-kpi-strip__value { display: block; margin-top: 8px; color: #1c2b43; font-size: 21px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; }
+.office-kpi-strip__value--positive { color: #087b5a; }
+.office-kpi-strip__value--danger { color: #c2413a; }
+.office-two-column { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(340px, 0.95fr); gap: 20px; align-items: start; }
+.office-equal-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; }
+.office-form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px 18px; align-items: end; }
+.office-form-field { display: grid; gap: 7px; min-width: 0; }
+.office-form-field > label { color: #536177; font-size: 12px; font-weight: 650; }
+.office-form-field--wide { grid-column: 1 / -1; }
+.office-form-actions { display: flex; align-items: end; gap: 10px; }
+.office-panel-note { margin: 0 0 18px; color: #728096; font-size: 13px; line-height: 1.7; }
+.office-result-block { margin-top: 16px; padding: 16px; background: #f8fafc; border: 1px solid #edf0f4; border-radius: 8px; }
+
+/* 图表：弱化框线，统一坐标、提示框和图例，避免“玩具化”渐变/阴影 */
+.office-chart { min-width: 0; }
+.office-chart .recharts-cartesian-grid-horizontal line { stroke: #e9eef5; stroke-dasharray: 0; }
+.office-chart .recharts-cartesian-grid-vertical line { stroke: transparent; }
+.office-chart .recharts-text { fill: #7a8699; font-size: 11px; }
+.office-chart .recharts-legend-wrapper { padding-top: 8px; }
+.office-chart .recharts-legend-item-text { color: #657084 !important; font-size: 12px; }
+.office-chart .recharts-default-tooltip { padding: 10px 12px !important; color: #26354d !important; background: rgba(255,255,255,0.97) !important; border: 1px solid #dfe6ef !important; border-radius: 7px !important; box-shadow: 0 10px 28px rgba(31, 48, 76, 0.12); }
+.office-chart .recharts-tooltip-label { margin-bottom: 5px !important; color: #657084 !important; font-size: 11px; }
+.office-chart-legend { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin-top: 4px; }
+.office-chart-legend__item { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; padding: 9px 10px; color: #536177; font-size: 12px; background: #f8fafc; border: 1px solid #edf0f4; border-radius: 6px; }
+.office-chart-legend__label { display: flex; align-items: center; min-width: 0; gap: 7px; }
+.office-chart-legend__dot { display: block; width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; }
+.office-chart-legend__value { color: #26354d; font-weight: 650; font-variant-numeric: tabular-nums; }
+.office-donut { position: relative; }
+.office-donut__total { position: absolute; inset: 0; display: grid; place-content: center; pointer-events: none; text-align: center; }
+.office-donut__total strong { display: block; color: #1c2b43; font-size: 26px; line-height: 1.1; }
+.office-donut__total span { display: block; margin-top: 4px; color: #7a8699; font-size: 11px; }
+
+/* 预测、同步等具有输入和结果的面板采用稳定的工作流布局 */
+.office-selection-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 36px; padding: 10px 12px; background: #f8fafc; border: 1px solid #edf0f4; border-radius: 7px; }
+.office-selection-summary .ant-tag { margin: 0; }
+.office-table-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.office-table-toolbar__meta { color: #728096; font-size: 13px; }
+
+/* 登录 */
+.login-shell {
+  position: relative;
+  display: grid;
+  min-height: 100vh;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.82fr);
+  align-items: center;
+  gap: clamp(36px, 7vw, 140px);
+  padding: clamp(32px, 7vw, 104px);
+  overflow: hidden;
+  background-color: #111a2c;
+  background-image: linear-gradient(90deg, rgba(10, 22, 49, 0.94) 0%, rgba(10, 22, 49, 0.83) 31%, rgba(10, 22, 49, 0.25) 58%, rgba(8, 15, 30, 0.10) 100%), url("/login-office-bg.png");
+  background-position: center;
+  background-size: cover;
+}
+
+.login-shell::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  background: linear-gradient(180deg, rgba(8, 17, 36, 0.12), rgba(8, 17, 36, 0.42));
+}
+
+.login-intro, .login-panel { position: relative; z-index: 1; }
+.login-intro { max-width: 530px; color: #ffffff; }
+.login-logo-row { display: flex; align-items: center; gap: 12px; margin-bottom: clamp(42px, 8vh, 96px); }
+.login-logo-row span { color: #d7e6ff; font-size: 13px; font-weight: 600; letter-spacing: 0.06em; }
+.login-kicker { margin-bottom: 18px; color: #8eb9ff; font-size: 12px; font-weight: 750; letter-spacing: 0.12em; }
+.login-intro h1 { max-width: 490px; margin: 0; color: #ffffff; font-size: clamp(36px, 4.2vw, 60px); font-weight: 720; letter-spacing: -0.055em; line-height: 1.12; }
+.login-intro p { max-width: 450px; margin: 22px 0 0; color: #cfdaee; font-size: 16px; line-height: 1.8; }
+.login-highlights { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 34px; }
+.login-highlight { display: inline-flex; align-items: center; gap: 8px; padding: 8px 11px; color: #e7f0ff; font-size: 12px; background: rgba(255, 255, 255, 0.09); border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 8px; backdrop-filter: blur(8px); }
+.login-highlight .anticon { color: #90b9ff; }
+
+.login-panel { justify-self: end; width: min(100%, 426px); }
+.login-card { border: 1px solid rgba(255, 255, 255, 0.55) !important; background: rgba(255, 255, 255, 0.93) !important; box-shadow: 0 28px 80px rgba(3, 12, 30, 0.34) !important; backdrop-filter: blur(18px); }
+.login-card .ant-card-body { padding: 38px !important; }
+.login-card__icon { display: grid; width: 48px; height: 48px; place-items: center; margin-bottom: 22px; color: #ffffff; background: #1f5dcc; border-radius: 12px; box-shadow: 0 8px 16px rgba(37, 99, 235, 0.22); }
+.login-card h2 { margin: 0; color: #15223a; font-size: 25px; font-weight: 720; letter-spacing: -0.025em; }
+.login-card__subtitle { display: block; margin-top: 7px; color: #6d788b; line-height: 1.65; }
+.login-card .ant-form { margin-top: 28px; }
+.login-card .ant-form-item-label > label { color: #42516a; font-size: 13px; font-weight: 650; }
+.login-card .ant-divider { margin: 24px 0 16px; border-color: #e7ebf1; }
+.login-card__note { display: block; color: #8792a4; font-size: 12px; line-height: 1.65; text-align: center; }
+
+@media (max-width: 767px) {
+  .office-header { height: 62px !important; padding: 0 16px !important; }
+  .office-header__eyebrow { display: none; }
+  .office-header__context strong { font-size: 14px; }
+  .office-content { min-height: calc(100vh - 62px); padding: 22px 14px 32px; }
+  .office-page-header { align-items: stretch; flex-direction: column; gap: 14px; margin-bottom: 20px; }
+  .office-page-header h1 { font-size: 23px; }
+  .office-page-header__extra { justify-content: flex-start; }
+  .office-mobile-menu { border-inline-end: 0 !important; }
+  .office-mobile-menu .ant-menu-item-group-title { padding-inline: 12px !important; color: #8a95a8 !important; font-size: 11px !important; font-weight: 700 !important; }
+  .office-mobile-user { padding-top: 14px; margin-top: 14px; border-top: 1px solid #e8ecf2; }
+  .office-mobile-user .office-user { color: #243248; background: #f7f9fc; }
+  .office-mobile-user .office-user__name { color: #243248; }
+  .office-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .office-metric-card .ant-card-body { min-height: 98px; padding: 15px; }
+  .office-metric-card .ant-statistic-content { font-size: 23px; }
+  .office-kpi-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 16px; }
+  .office-kpi-strip__item { padding: 0 12px; border-right: 0; }
+  .office-kpi-strip__item:nth-child(odd) { padding-left: 0; }
+  .office-kpi-strip__item:nth-child(even) { padding-right: 0; }
+  .office-two-column, .office-equal-columns { grid-template-columns: 1fr; gap: 16px; }
+  .office-form-grid { grid-template-columns: 1fr; gap: 14px; }
+  .office-form-actions { align-items: stretch; }
+  .office-form-actions .ant-btn { width: 100%; }
+  .office-chart-legend { grid-template-columns: 1fr; }
+  .ant-card .ant-card-head { min-height: 52px; padding: 0 16px; }
+  .ant-card .ant-card-body { padding: 16px; }
+  .ant-table-wrapper .ant-table-thead > tr > th { padding-top: 10px !important; padding-bottom: 10px !important; }
+  .ant-table-wrapper .ant-table-tbody > tr > td { padding-top: 11px !important; padding-bottom: 11px !important; }
+  .login-shell { display: flex; min-height: 100svh; align-items: flex-end; padding: 20px; background-image: linear-gradient(180deg, rgba(9, 20, 45, 0.35), rgba(9, 20, 45, 0.88)), url("/login-office-bg.png"); }
+  .login-intro { display: none; }
+  .login-panel { width: 100%; justify-self: auto; }
+  .login-card .ant-card-body { padding: 28px 24px !important; }
+}

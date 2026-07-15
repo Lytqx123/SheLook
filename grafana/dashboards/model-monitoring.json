@@ -1,0 +1,86 @@
+{
+    "uid": "shelook-model",
+    "title": "SheLook - 模型监控看板",
+    "tags": ["shelook", "model", "ml"],
+    "timezone": "browser",
+    "refresh": "60s",
+    "time": {"from": "now-6h", "to": "now"},
+    "panels": [
+      {
+        "id": 1,
+        "title": "CTR 模型预测漂移 (MAE)",
+        "type": "gauge",
+        "gridPos": {"x": 0, "y": 0, "w": 8, "h": 6},
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "targets": [
+          {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "shelook_model_prediction_drift{model_type='ctr'}", "legendFormat": "CTR Drift"}
+        ],
+        "fieldConfig": {
+          "defaults": {"unit": "none", "min": 0, "max": 0.1, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": 0}, {"color": "orange", "value": 0.02}, {"color": "red", "value": 0.05}]}}
+        }
+      },
+      {
+        "id": 2,
+        "title": "Hit 模型预测漂移 (MAE)",
+        "type": "gauge",
+        "gridPos": {"x": 8, "y": 0, "w": 8, "h": 6},
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "targets": [
+          {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "shelook_model_prediction_drift{model_type='hit'}", "legendFormat": "Hit Drift"}
+        ],
+        "fieldConfig": {
+          "defaults": {"unit": "none", "min": 0, "max": 0.2, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": 0}, {"color": "orange", "value": 0.05}, {"color": "red", "value": 0.1}]}}
+        }
+      },
+      {
+        "id": 3,
+        "title": "Return 模型预测漂移 (MAE)",
+        "type": "gauge",
+        "gridPos": {"x": 16, "y": 0, "w": 8, "h": 6},
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "targets": [
+          {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "shelook_model_prediction_drift{model_type='return'}", "legendFormat": "Return Drift"}
+        ],
+        "fieldConfig": {
+          "defaults": {"unit": "none", "min": 0, "max": 0.15, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": 0}, {"color": "orange", "value": 0.03}, {"color": "red", "value": 0.08}]}}
+        }
+      },
+      {
+        "id": 4,
+        "title": "预测漂移趋势",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 6, "w": 24, "h": 8},
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "targets": [
+          {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "avg_over_time(shelook_model_prediction_drift{model_type='ctr'}[5m])", "legendFormat": "CTR"},
+          {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "avg_over_time(shelook_model_prediction_drift{model_type='hit'}[5m])", "legendFormat": "Hit"},
+          {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "avg_over_time(shelook_model_prediction_drift{model_type='return'}[5m])", "legendFormat": "Return"}
+        ],
+        "fieldConfig": {
+          "defaults": {"custom": {"lineWidth": 2}}
+        }
+      },
+      {
+        "id": 5,
+        "title": "模型版本分布",
+        "type": "stat",
+        "gridPos": {"x": 0, "y": 14, "w": 12, "h": 4},
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "targets": [
+          {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "count(shelook_model_prediction_drift{model_type='ctr'})", "legendFormat": "活跃 CTR 模型"}
+        ]
+      },
+      {
+        "id": 6,
+        "title": "数据飞轮重训次数",
+        "type": "stat",
+        "gridPos": {"x": 12, "y": 14, "w": 12, "h": 4},
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "targets": [
+          {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "changes(shelook_model_prediction_drift{model_type='ctr'}[7d])", "legendFormat": "7d 重训次数"}
+        ]
+      }
+    ],
+    "schemaVersion": 39,
+    "version": 1
+}

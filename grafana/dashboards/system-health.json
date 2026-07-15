@@ -1,0 +1,76 @@
+{
+    "uid": "shelook-system",
+    "title": "SheLook - 系统健康看板",
+    "tags": ["shelook", "system", "health"],
+    "timezone": "browser",
+    "refresh": "30s",
+    "time": {"from": "now-6h", "to": "now"},
+    "panels": [
+      {
+        "id": 1,
+        "title": "API 请求速率",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "targets": [
+          {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(rate(shelook_requests_total[1m])) by (endpoint)", "legendFormat": "{{endpoint}}"}
+        ],
+        "fieldConfig": {
+          "defaults": {"unit": "reqps", "custom": {"lineWidth": 2}}
+        }
+      },
+      {
+        "id": 2,
+        "title": "请求延迟 p50/p95/p99",
+        "type": "timeseries",
+        "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "targets": [
+          {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "histogram_quantile(0.50, sum(rate(shelook_request_latency_seconds_bucket[5m])) by (le))", "legendFormat": "p50"},
+          {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "histogram_quantile(0.95, sum(rate(shelook_request_latency_seconds_bucket[5m])) by (le))", "legendFormat": "p95"},
+          {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "histogram_quantile(0.99, sum(rate(shelook_request_latency_seconds_bucket[5m])) by (le))", "legendFormat": "p99"}
+        ],
+        "fieldConfig": {
+          "defaults": {"unit": "s", "custom": {"lineWidth": 2}}
+        }
+      },
+      {
+        "id": 3,
+        "title": "Celery 队列深度",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "targets": [
+          {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "shelook_celery_queue_length", "legendFormat": "{{queue}}"}
+        ],
+        "fieldConfig": {
+          "defaults": {"custom": {"lineWidth": 2}}
+        }
+      },
+      {
+        "id": 4,
+        "title": "活跃请求数",
+        "type": "stat",
+        "gridPos": {"x": 12, "y": 8, "w": 6, "h": 4},
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "targets": [
+          {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "shelook_active_requests", "legendFormat": "活跃请求"}
+        ]
+      },
+      {
+        "id": 5,
+        "title": "错误率 (4xx/5xx)",
+        "type": "timeseries",
+        "gridPos": {"x": 18, "y": 8, "w": 6, "h": 4},
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "targets": [
+          {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(rate(shelook_requests_total{status=~'4..|5..'}[1m])) / sum(rate(shelook_requests_total[1m])) * 100"}
+        ],
+        "fieldConfig": {
+          "defaults": {"unit": "percent"}
+        }
+      }
+    ],
+    "schemaVersion": 39,
+    "version": 1
+}

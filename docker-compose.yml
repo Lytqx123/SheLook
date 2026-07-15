@@ -1,0 +1,576 @@
+# ============================================================
+# SheLook 服务编排
+#
+# 一键部署:
+#   .\setup.ps1          (Windows)
+#   ./setup.sh           (Linux/macOS)
+#
+# 手动部署:
+#   1. copy .env.example .env
+#   2. 编辑 .env 填入 API Key
+#   3. docker compose build
+#   4. docker compose up -d postgres redis minio
+#   5. docker compose run --rm backend alembic upgrade head
+#   6. docker compose run --rm backend python scripts/init_minio.py
+#   7. docker compose run --rm backend python scripts/seed_data.py
+#   8. docker compose up -d
+#
+# 可选 Profile:
+#   docker compose --profile sd-webui up -d    # 本地降级生图 (需 GPU)
+#   docker compose --profile pgbouncer up -d   # 数据库连接池
+#
+# 停止:
+#   .\setup.ps1 -Stop          # 仅停止
+#   docker compose down -v     # 停止并清除数据
+#
+# 核心服务 (11 个):
+#   postgres / redis / minio / backend / celery-worker
+#   celery-beat / flower / frontend / nginx / prometheus / grafana
+# 可选服务 (2 个):
+#   pgbouncer (连接池) / sd-webui (本地降级生图)
+# ============================================================
+
+# ---- YAML Anchor: 日志配置 ----
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+# ---- YAML Anchor: 容器代理（用于访问外部 AI 服务） ----
+x-proxy-env: &proxy-env
+  HTTP_PROXY: http://host.docker.internal:7890
+  HTTPS_PROXY: http://host.docker.internal:7890
+  http_proxy: http://host.docker.internal:7890
+  https_proxy: http://host.docker.internal:7890
+  # hf-mirror.com 走直连获取模型文件；其余 AI 服务走代理
+  NO_PROXY: localhost,127.0.0.1,postgres,redis,minio,.internal,hf-mirror.com
+
+# ---- YAML Anchor: 后端环境变量 ----
+x-backend-env: &backend-env
+  # 数据库（凭据通过 POSTGRES_USER/PASSWORD 环境变量控制）
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-shelook}:${POSTGRES_PASSWORD:-shelook}@postgres:5432/${POSTGRES_DB:-shelook}
+  DATABASE_URL_SYNC: postgresql+psycopg2://${POSTGRES_USER:-shelook}:${POSTGRES_PASSWORD:-shelook}@postgres:5432/${POSTGRES_DB:-shelook}
+  PGVECTOR_EXTENSION: "true"
+  # Redis（密码通过 requirepass 保护）
+  REDIS_URL: redis://:${REDIS_PASSWORD:-shelook-dev}@redis:6379/0
+  CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-shelook-dev}@redis:6379/1
+  CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-shelook-dev}@redis:6379/2
+  # MinIO
+  MINIO_ENDPOINT: minio:9000
+  MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-shelook}
+  MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-shelook123}
+  MINIO_BUCKET: ${MINIO_BUCKET:-product-images}
+  MINIO_PRIVATE_BUCKET: ${MINIO_PRIVATE_BUCKET:-product-images-private}
+  MINIO_PUBLIC_BASE_URL: ${MINIO_PUBLIC_BASE_URL:-http://localhost:9000}
+  MINIO_REGION: ${MINIO_REGION:-us-east-1}
+  MINIO_PRESIGNED_URL_EXPIRY_SECONDS: ${MINIO_PRESIGNED_URL_EXPIRY_SECONDS:-3600}
+  MINIO_SECURE: "false"
+  # 向量检索
+  VECTOR_DIMENSION: "512"
+  CLIP_MODEL_NAME: openai/clip-vit-base-patch32
+  IMAGE_TEXT_MATCH_THRESHOLD: "0.25"
+  # HuggingFace 镜像站（国内直连稳定获取模型文件）
+  HF_ENDPOINT: https://hf-mirror.com
+  HF_HUB_ENABLE_HF_TRANSFER: "0"
+  HF_HUB_DISABLE_XET: "1"
+  # AIGC 生图
+  REPLICATE_API_TOKEN: ${REPLICATE_API_TOKEN:-}
+  REPLICATE_MODEL: ${REPLICATE_MODEL:-}
+  REPLICATE_TIMEOUT: "180"
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  GEMINI_BASE_URL: ${GEMINI_BASE_URL:-}
+  SD_WEBUI_URL: ${SD_WEBUI_URL:-http://sd-webui:7860}
+  ALLOW_GENERATION_MOCKS: ${ALLOW_GENERATION_MOCKS:-true}
+  # AI 视频生成
+  KLING_API_KEY: ${KLING_API_KEY:-}
+  KLING_API_BASE_URL: ${KLING_API_BASE_URL:-}
+  KLING_ACCESS_KEY: ${KLING_ACCESS_KEY:-}
+  KLING_SECRET_KEY: ${KLING_SECRET_KEY:-}
+  RUNWAY_API_KEY: ${RUNWAY_API_KEY:-}
+  # CORS / 限流 / 认证
+  CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:3000","http://localhost:8000"]}
+  RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+  RATE_LIMIT_REQUESTS: ${RATE_LIMIT_REQUESTS:-600}
+  RATE_LIMIT_WINDOW: ${RATE_LIMIT_WINDOW:-60}
+  JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+  JWT_EXPIRE_HOURS: ${JWT_EXPIRE_HOURS:-24}
+  ENABLE_AUTH: ${ENABLE_AUTH:-false}
+  OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
+  OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+  OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+  OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
+  OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-http://localhost:3000/login/callback}
+  OIDC_SCOPES: ${OIDC_SCOPES:-openid profile email}
+  OIDC_ROLE_CLAIM: ${OIDC_ROLE_CLAIM:-roles}
+  OIDC_ADMIN_ROLES: ${OIDC_ADMIN_ROLES:-["admin","shelook-admin"]}
+  IMAGE_FETCH_ALLOWED_HOSTS: ${IMAGE_FETCH_ALLOWED_HOSTS:-["placehold.co","replicate.delivery","pbxt.replicate.delivery","storage.googleapis.com","ai.googleusercontent.com"]}
+  IMAGE_FETCH_TRUSTED_PRIVATE_HOSTS: ${IMAGE_FETCH_TRUSTED_PRIVATE_HOSTS:-[]}
+  IMAGE_FETCH_MAX_BYTES: ${IMAGE_FETCH_MAX_BYTES:-26214400}
+  C2PA_ENABLED: ${C2PA_ENABLED:-false}
+  C2PA_REQUIRED: ${C2PA_REQUIRED:-false}
+  C2PA_CERT_PATH: ${C2PA_CERT_PATH:-}
+  C2PA_PRIVATE_KEY_PATH: ${C2PA_PRIVATE_KEY_PATH:-}
+  C2PA_SIGNING_ALGORITHM: ${C2PA_SIGNING_ALGORITHM:-ES256}
+  # 预测降级值
+  FALLBACK_CTR: ${FALLBACK_CTR:-0.025}
+  FALLBACK_HIT_PROBABILITY: ${FALLBACK_HIT_PROBABILITY:-0.3}
+  # 可观测性
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  OTEL_ENABLED: ${OTEL_ENABLED:-false}
+  OTEL_SERVICE_NAME: shelook-backend
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+  # 运行环境
+  APP_ENV: ${APP_ENV:-production}
+  DEBUG: ${DEBUG:-false}
+  # 安全密钥（setup.ps1 / setup.sh 自动生成，手动部署需自行填写）
+  SECRET_KEY: ${SECRET_KEY:?SECRET_KEY 必须设置，运行 setup 脚本自动配置或用 openssl rand -hex 32 手动生成}
+  # Redis 密码（需与 redis 服务配置一致）
+  REDIS_PASSWORD: ${REDIS_PASSWORD:-shelook-dev}
+  # 数据指标 API 鉴权
+  METRICS_API_KEY: ${METRICS_API_KEY:-}
+  # Shopee Open API v2
+  SHOPEE_PARTNER_ID: ${SHOPEE_PARTNER_ID:-}
+  SHOPEE_PARTNER_KEY: ${SHOPEE_PARTNER_KEY:-}
+  SHOPEE_SHOP_ID: ${SHOPEE_SHOP_ID:-}
+  SHOPEE_ACCESS_TOKEN: ${SHOPEE_ACCESS_TOKEN:-}
+  # Lazada Open Platform
+  # Amazon SP-API
+  AMAZON_CLIENT_ID: ${AMAZON_CLIENT_ID:-}
+  AMAZON_CLIENT_SECRET: ${AMAZON_CLIENT_SECRET:-}
+  AMAZON_REFRESH_TOKEN: ${AMAZON_REFRESH_TOKEN:-}
+  AMAZON_MARKETPLACE_ID: ${AMAZON_MARKETPLACE_ID:-ATVPDKIKX0DER}
+  AMAZON_REPORT_POLL_SECONDS: ${AMAZON_REPORT_POLL_SECONDS:-5}
+  AMAZON_REPORT_TIMEOUT_SECONDS: ${AMAZON_REPORT_TIMEOUT_SECONDS:-180}
+  AMAZON_SYNC_MAX_DAYS: ${AMAZON_SYNC_MAX_DAYS:-3}
+
+# ---- YAML Anchor: 后端依赖 ----
+x-backend-depends: &backend-depends
+  postgres:
+    condition: service_healthy
+  redis:
+    condition: service_healthy
+  minio:
+    condition: service_healthy
+
+services:
+  # ========================================
+  # 数据层
+  # ========================================
+
+  postgres:
+    image: pgvector/pgvector:0.8.2-pg17
+    container_name: shelook-postgres
+    restart: unless-stopped
+    init: true
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-shelook}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shelook}
+      POSTGRES_DB: ${POSTGRES_DB:-shelook}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shelook}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  redis:
+    image: redis:8-alpine
+    container_name: shelook-redis
+    restart: unless-stopped
+    init: true
+    command: redis-server --requirepass ${REDIS_PASSWORD:-shelook-dev}
+    environment:
+      # 将 REDIS_PASSWORD 传入容器环境，供 healthcheck 读取
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-shelook-dev}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $${REDIS_PASSWORD:-shelook-dev} ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  minio:
+    # 使用社区维护的 pgsty/minio 分支，持续发布安全更新
+    image: pgsty/minio:RELEASE.2026-03-25T00-00-00Z
+    container_name: shelook-minio
+    restart: unless-stopped
+    init: true
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-shelook}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-shelook123}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD-SHELL", "mc alias set local http://localhost:9000 $${MINIO_ROOT_USER:-shelook} $${MINIO_ROOT_PASSWORD:-shelook123} 2>/dev/null && mc ready local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ========================================
+  # PgBouncer 连接池 (可选，--profile pgbouncer)
+  # ========================================
+  pgbouncer:
+    image: edoburu/pgbouncer:1.24
+    container_name: shelook-pgbouncer
+    restart: unless-stopped
+    init: true
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER:-shelook}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-shelook}
+      DB_NAME: ${POSTGRES_DB:-shelook}
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 500
+      DEFAULT_POOL_SIZE: 25
+      MIN_POOL_SIZE: 5
+      RESERVE_POOL_SIZE: 5
+      RESERVE_POOL_TIMEOUT: 3
+      SERVER_IDLE_TIMEOUT: 60
+      ADMIN_USERS: ${POSTGRES_USER:-shelook}
+    ports:
+      - "6432:6432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432 -U ${POSTGRES_USER:-shelook}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    profiles:
+      - pgbouncer
+
+  # ========================================
+  # SD WebUI 降级生图 (可选，--profile sd-webui，需 GPU)
+  # ========================================
+  sd-webui:
+    image: ghcr.io/abdullahrizwan/stable-diffusion-webui:latest
+    container_name: shelook-sd-webui
+    restart: unless-stopped
+    init: true
+    ports:
+      - "7860:7860"
+    environment:
+      - COMMANDLINE_ARGS=--api --listen --enable-insecure-extension-access
+    volumes:
+      - sd_models:/stable-diffusion-webui/models
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:7860/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging: *default-logging
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    profiles:
+      - sd-webui
+
+  # ========================================
+  # 应用层
+  # ========================================
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: shelook-backend
+    restart: unless-stopped
+    init: true
+    environment:
+      <<: [*backend-env, *proxy-env]
+    ports:
+      - "8000:8000"
+    depends_on:
+      <<: *backend-depends
+    volumes:
+      - ./backend:/app
+      - hf_cache:/home/appuser/.cache/huggingface
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 300s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: shelook-celery-worker
+    restart: unless-stopped
+    init: true
+    environment:
+      <<: [*backend-env, *proxy-env]
+    depends_on:
+      <<: *backend-depends
+    volumes:
+      - ./backend:/app
+      - hf_cache:/home/appuser/.cache/huggingface
+    command: celery -A app.tasks worker --loglevel=info --concurrency=4
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.tasks inspect ping -d celery@$$HOSTNAME || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: shelook-celery-beat
+    restart: unless-stopped
+    init: true
+    environment:
+      <<: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'celery beat' > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    command: celery -A app.tasks beat --loglevel=info --schedule=/tmp/celerybeat-schedule
+
+  flower:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: shelook-flower
+    restart: unless-stopped
+    init: true
+    ports:
+      - "5555:5555"
+    environment:
+      <<: *backend-env
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import socket; s=socket.socket(); s.settimeout(3); s.connect(('127.0.0.1', 5555)); s.close()\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    command: celery -A app.tasks flower --port=5555 --url_prefix=flower
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: shelook-frontend
+    restart: unless-stopped
+    init: true
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ========================================
+  # 反向代理
+  # ========================================
+
+  nginx:
+    image: nginx:1.30.3-alpine
+    container_name: shelook-nginx
+    restart: unless-stopped
+    init: true
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+      flower:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  # ========================================
+  # 可观测性 (Phase 3)
+  # ========================================
+
+  prometheus:
+    image: prom/prometheus:v3.8.0
+    container_name: shelook-prometheus
+    restart: unless-stopped
+    init: true
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:9090/-/healthy || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  grafana:
+    image: grafana/grafana:12.4.0
+    container_name: shelook-grafana
+    restart: unless-stopped
+    init: true
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s:%(http_port)s/grafana/"
+    volumes:
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/dashboards/provider.yml:/etc/grafana/provisioning/dashboards/default.yml:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # 可选：Postgres / Redis / Nginx / Node Exporters（按需启用）
+  # 启用方式：取消注释对应 exporter 服务块
+  #
+  # postgres-exporter:
+  #   image: quay.io/prometheuscommunity/postgres-exporter:v0.17.0
+  #   container_name: shelook-postgres-exporter
+  #   environment:
+  #     DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-shelook}:${POSTGRES_PASSWORD:-shelook}@postgres:5432/${POSTGRES_DB:-shelook}?sslmode=disable"
+  #   ports:
+  #     - "9187:9187"
+  #
+  # redis-exporter:
+  #   image: oliver006/redis_exporter:v1.71.0
+  #   container_name: shelook-redis-exporter
+  #   command: ["--redis.addr=redis://:${REDIS_PASSWORD:-shelook-dev}@redis:6379"]
+  #   ports:
+  #     - "9121:9121"
+
+# ========================================
+# 持久化卷
+# ========================================
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  sd_models:
+  hf_cache:
+  prometheus_data:
+  grafana_data:

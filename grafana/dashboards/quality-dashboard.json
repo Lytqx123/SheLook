@@ -1,0 +1,113 @@
+{
+    "uid": "shelook-quality",
+    "title": "SheLook - 服务质量看板",
+    "tags": ["shelook", "quality"],
+    "timezone": "browser",
+    "refresh": "30s",
+    "time": {"from": "now-6h", "to": "now"},
+    "panels": [
+      {
+        "id": 1,
+        "title": "L1 / L2 / L3 通过率",
+        "type": "stat",
+        "gridPos": {"x": 0, "y": 0, "w": 8, "h": 4},
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "targets": [
+          {
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "expr": "avg(shelook_quality_pass_rate{layer='L1',verdict='auto_approved'}) * 100",
+            "legendFormat": "L1 通过率"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": 0}, {"color": "orange", "value": 80}, {"color": "green", "value": 95}]}
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "L2 通过率",
+        "type": "stat",
+        "gridPos": {"x": 8, "y": 0, "w": 8, "h": 4},
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "targets": [
+          {
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "expr": "avg(shelook_quality_pass_rate{layer='L2',verdict='auto_approved'}) * 100",
+            "legendFormat": "L2 通过率"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": 0}, {"color": "orange", "value": 60}, {"color": "green", "value": 85}]}
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "L3 通过率",
+        "type": "stat",
+        "gridPos": {"x": 16, "y": 0, "w": 8, "h": 4},
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "targets": [
+          {
+            "datasource": {"type": "prometheus", "uid": "prometheus"},
+            "expr": "avg(shelook_quality_pass_rate{layer='L3',verdict='auto_approved'}) * 100",
+            "legendFormat": "L3 通过率"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": 0}, {"color": "orange", "value": 60}, {"color": "green", "value": 85}]}
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "质检通过率趋势 (L1/L2/L3)",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 4, "w": 24, "h": 8},
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "targets": [
+          {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "avg_over_time(shelook_quality_pass_rate{layer='L1',verdict='auto_approved'}[5m]) * 100", "legendFormat": "L1 通过率"},
+          {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "avg_over_time(shelook_quality_pass_rate{layer='L2',verdict='auto_approved'}[5m]) * 100", "legendFormat": "L2 通过率"},
+          {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "avg_over_time(shelook_quality_pass_rate{layer='L3',verdict='auto_approved'}[5m]) * 100", "legendFormat": "L3 通过率"}
+        ],
+        "fieldConfig": {
+          "defaults": {"unit": "percent", "custom": {"lineWidth": 2}}
+        }
+      },
+      {
+        "id": 5,
+        "title": "生成任务耗时分布",
+        "type": "heatmap",
+        "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "targets": [
+          {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(rate(shelook_generation_task_duration_seconds_bucket[5m])) by (le, provider)"}
+        ],
+        "fieldConfig": {
+          "defaults": {"unit": "s"}
+        }
+      },
+      {
+        "id": 6,
+        "title": "生成任务成功率",
+        "type": "timeseries",
+        "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8},
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "targets": [
+          {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(rate(shelook_generation_task_duration_seconds_count{status='success'}[5m])) by (provider) / sum(rate(shelook_generation_task_duration_seconds_count[5m])) by (provider) * 100", "legendFormat": "{{provider}} 成功率"}
+        ],
+        "fieldConfig": {
+          "defaults": {"unit": "percent"}
+        }
+      }
+    ],
+    "schemaVersion": 39,
+    "version": 1
+}

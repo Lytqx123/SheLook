@@ -1,0 +1,157 @@
+[project]
+name = "shelook-backend"
+version = "1.0.0"
+description = "SheLook - AI 商品图决策系统后端"
+readme = { text = "SheLook AI product-image decision backend.", content-type = "text/markdown" }
+requires-python = ">=3.13"
+license = { text = "MIT" }
+authors = [{ name = "SheLook Team" }]
+
+dependencies = [
+    # ---- Web 框架 ----
+    "fastapi==0.139.0",
+    "uvicorn[standard]==0.51.0",
+    "pydantic==2.13.4",
+    "pydantic-settings==2.14.2",
+    "python-multipart==0.0.32",
+
+    # ---- 数据库 ----
+    "sqlalchemy[asyncio]==2.0.51",
+    "psycopg2-binary==2.9.12",
+    "asyncpg==0.31.0",
+    "pgvector==0.5.0",
+    "alembic==1.18.5",
+
+    # ---- 缓存 & 任务队列 ----
+    "redis>=5.0,<6.5",
+    "celery[redis]==5.6.3",
+    "flower==2.0.1",
+
+    # ---- 对象存储 ----
+    "minio==7.2.20",
+
+    # ---- ML / CV / NLP ----
+    "torch==2.13.0",
+    "transformers==5.13.0",
+    "pillow==12.3.0",
+    "sentence-transformers==5.6.0",
+    "scikit-learn==1.9.0",
+    "hdbscan==0.8.42",
+    "numpy==2.5.1",
+
+    # ---- HTTP & 工具 ----
+    "httpx==0.28.1",
+    "python-dotenv==1.2.2",
+    "tenacity==9.1.4",
+    "orjson==3.11.9",
+    "pyjwt==2.10.1",
+    "cryptography>=45.0,<47.0",
+
+    # ---- 可观测性 ----
+    "structlog==26.1.0",
+    "prometheus-client==0.25.0",
+    "opentelemetry-api==1.43.0",
+    "opentelemetry-sdk==1.43.0",
+    "opentelemetry-instrumentation-fastapi==0.64b0",
+    "opentelemetry-instrumentation-sqlalchemy==0.64b0",
+    "opentelemetry-instrumentation-asgi==0.64b0",
+
+]
+
+[project.optional-dependencies]
+providers = [
+    "google-genai==2.10.0",
+    "replicate>=1.0,<2.0",
+    "c2pa-python==0.36.0",
+]
+observability = [
+    "opentelemetry-distro>=0.64b0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.43.0",
+    "opentelemetry-instrumentation-redis>=0.64b0",
+    "opentelemetry-instrumentation-httpx>=0.64b0",
+    "opentelemetry-instrumentation-celery>=0.64b0",
+]
+dev = [
+    "ruff>=0.11.0",
+    "mypy>=1.15",
+    "pytest>=8.0",
+    "httpx>=0.28",          # 用于 TestClient
+    "aiosqlite>=0.21",
+]
+perf = [
+    "locust>=2.43",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+exclude = [
+    "alembic/",
+    "migrations/versions/",
+    "__pycache__/",
+    ".venv/",
+    "venv/",
+    "*.pyc",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+    "TCH", # flake8-type-checking (TYPE_CHECKING 优化)
+    "PIE", # flake8-pie (杂项建议)
+]
+ignore = [
+    "E501", # 行长度放宽到 100
+    "B008", # 允许函数默认参数中实例化
+    "N818", # 异常类名不需要 Error 后缀
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.ruff.lint.per-file-ignores]
+"app/main.py" = ["E402"]
+"app/services/clustering_service.py" = ["N803", "N806"]
+"app/services/data_flywheel.py" = ["N806"]
+"app/services/predictor.py" = ["N803", "N806"]
+"app/services/metrics_collector.py" = ["N806"]
+"app/config.py" = ["N802"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "lf"
+
+[tool.mypy]
+python_version = "3.13"
+strict = false
+warn_return_any = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

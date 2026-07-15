@@ -1,0 +1,53 @@
+# ============================================================
+# SheLook Staging 环境覆盖配置
+#
+# 使用: docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d
+#
+# 与 production 的差异:
+#   - 不限制容器资源（便于压测观察性能上限）
+#   - 暴露 backend 8000 / frontend 3000 / Flower 5555 端口便于调试
+#   - 暴露 Prometheus 9090 / Grafana 3001 端口便于监控
+# ============================================================
+
+services:
+  backend:
+    environment:
+      APP_ENV: staging
+      DEBUG: "false"
+      LOG_LEVEL: INFO
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./secrets/c2pa-cert.pem:/run/secrets/c2pa-cert.pem:ro
+      - ./secrets/c2pa-private-key.pem:/run/secrets/c2pa-private-key.pem:ro
+
+  celery-worker:
+    environment:
+      APP_ENV: staging
+    volumes:
+      - ./backend:/app
+      - ./secrets/c2pa-cert.pem:/run/secrets/c2pa-cert.pem:ro
+      - ./secrets/c2pa-private-key.pem:/run/secrets/c2pa-private-key.pem:ro
+
+  celery-beat:
+    environment:
+      APP_ENV: staging
+
+  flower:
+    ports:
+      - "5555:5555"
+
+  frontend:
+    environment:
+      APP_ENV: staging
+    ports:
+      - "3000:3000"
+
+  prometheus:
+    ports:
+      - "9090:9090"
+
+  grafana:
+    ports:
+      - "3001:3000"

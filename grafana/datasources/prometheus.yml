@@ -1,0 +1,17 @@
+# Grafana 数据源配置
+# 自动挂载到 /etc/grafana/provisioning/datasources/
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+    # 固定 UID，供仪表盘 panel target 通过 {"type":"prometheus","uid":"prometheus"} 引用
+    uid: prometheus
+    jsonData:
+      timeInterval: "15s"
+      queryTimeout: "30s"
