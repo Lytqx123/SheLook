@@ -1,7 +1,4 @@
-"""SheLook ORM 模型聚合导出
-
-所有 router / task / migration 都从这里 import，避免循环依赖。
-"""
+"""ORM 模型聚合导出，避免循环依赖。"""
 
 from app.models.audit_log import AuditLog
 from app.models.brand_standard import BrandStandard
@@ -36,10 +33,10 @@ __all__ = [
     "ExternalListingMapping",
     # 向量
     "ProductEmbedding",
-    # 品牌规范与供应商评分（002 迁移）
+    # 品牌规范与供应商评分
     "BrandStandard",
     "SupplierVisualScore",
     "SupplierAnalysisReport",
-    # 审计日志（004 迁移）
+    # 审计日志
     "AuditLog",
 ]

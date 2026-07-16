@@ -15,7 +15,6 @@ if TYPE_CHECKING:
 
 class ProductStatus(StrEnum):
     """商品状态：草稿 / 已上架 / 已归档"""
-
     DRAFT = "draft"
     PUBLISHED = "published"
     ARCHIVED = "archived"
@@ -30,6 +29,7 @@ class Product(Base):
     sku_code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     category: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    # 先这样用字符串存，后面统一改 Decimal
     price_range: Mapped[str | None] = mapped_column(String(32), nullable=True)
     target_markets: Mapped[list | None] = mapped_column(JSON, nullable=True)
     supplier_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
@@ -44,7 +44,7 @@ class Product(Base):
         DateTime, server_default=func.now(), onupdate=func.now()
     )
 
-    # 关联方案（按需加载，避免列表查询时的 N+1 问题）
+    # 关联方案，按需加载，避免 N+1
     schemes: Mapped[list["ImageScheme"]] = relationship(
         back_populates="product",
         cascade="all, delete-orphan",

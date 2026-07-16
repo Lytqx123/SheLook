@@ -9,10 +9,7 @@ from app.db.base import Base
 
 
 class SupplierVisualScore(Base):
-    """供应商视觉评分 —— 按品牌聚合供应商的图片质量/合规通过率
-
-    用于运营筛选优质供应商、规避高频违规供应方。
-    """
+    """供应商视觉评分 —— 按品牌聚合供应商的图片质量/合规通过率"""
 
     __tablename__ = "supplier_visual_scores"
 
@@ -23,8 +20,9 @@ class SupplierVisualScore(Base):
     pass_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
     avg_quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     compliance_score: Mapped[float | None] = mapped_column(Float, nullable=True)
-    # 003 迁移新增：各维度违规次数统计，如 {"sharpness": 3, "lighting_uniformity": 1}
+    # 各维度违规次数：{"sharpness": 3, "lighting_uniformity": 1}
     problem_dimension_scores: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # 记得改：evaluated_at 目前用的上次质检时间，不一定对
     last_evaluated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(

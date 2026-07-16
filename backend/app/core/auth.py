@@ -1,4 +1,4 @@
-"""应用 JWT 与企业 OpenID Connect 认证。"""
+"""应用 JWT + 企业 OIDC 登录"""
 
 import asyncio
 import base64
@@ -20,6 +20,7 @@ from starlette.requests import HTTPConnection
 from app.config import settings
 from app.core.logging import logger
 
+# 缓存 discovery 文档，一小时过期
 _discovery_cache: tuple[float, dict[str, Any]] | None = None
 
 
@@ -45,7 +46,7 @@ def _bearer_token(connection: HTTPConnection) -> str | None:
 
 
 async def get_current_user(connection: HTTPConnection) -> UserInfo | None:
-    """读取应用 JWT；仅开发/测试环境允许关闭认证。"""
+    """解析 JWT，认证关闭时直接返回 dev-user"""
     if not is_auth_enabled():
         return UserInfo(user_id="dev-user", username="developer", role="admin")
 
@@ -118,7 +119,7 @@ def _require_oidc_config() -> None:
 
 
 async def get_oidc_metadata() -> dict[str, Any]:
-    """读取并短时缓存 Provider Discovery 文档。"""
+    """拉取 Provider Discovery 文档，带一小时缓存"""
     global _discovery_cache
     _require_oidc_config()
     if _discovery_cache and _discovery_cache[0] > time.monotonic():
@@ -178,7 +179,7 @@ def _role_from_claims(claims: dict[str, Any]) -> str:
 
 
 async def complete_oidc_login(code: str, state: str) -> tuple[str, UserInfo]:
-    """一次性消费 state，交换 code，并完整验证 ID Token。"""
+    """用 code + state 换 token，验证 ID Token，返回 JWT + 用户信息"""
     metadata = await get_oidc_metadata()
     redis = aioredis.from_url(settings.REDIS_URL, encoding="utf-8", decode_responses=True)
     try:

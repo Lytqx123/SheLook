@@ -1,4 +1,4 @@
-"""视觉方案 API —— 推荐 + 相似检索"""
+"""视觉方案 API —— 推荐 + 以图搜图"""
 
 import asyncio
 import io
@@ -37,7 +37,7 @@ async def search_by_image(
     market: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """以图搜图 —— 上传图片 URL，返回视觉相似的商品方案"""
+    """传个图片 URL，返回视觉相似的商品方案"""
     from app.services.image_search import search_by_image_url
 
     if not image_url:
@@ -62,7 +62,7 @@ async def search_by_image_upload(
     category: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """以图搜图（直接上传二进制）"""
+    """以图搜图，直接上传二进制文件"""
     from app.services.image_search import search_by_image
 
     results = await search_by_image(
@@ -82,19 +82,13 @@ async def recommend_scheme(
     db: AsyncSession = Depends(get_db),
     vector_store: PgvectorStore = Depends(get_vector_store),
 ):
-    """基于 CLIP 相似度推荐视觉方案
-
-    流程：
-    1. 下载上传的平铺图
-    2. 用 CLIP 提取图片向量
-    3. 在 pgvector 中搜索最相似的嵌入
-    4. 返回对应商品的方案列表
-    """
-    # 1) 经统一 SSRF/大小/类型策略下载图片
+    """基于 CLIP 相似度推荐视觉方案：下载图片 → CLIP 提特征 → pgvector 搜 → 返回方案"""
     from fastapi import HTTPException
 
     from app.services.embedding_service import get_clip_embedding
     from app.services.image_fetcher import ImageFetchError, fetch_image
+
+    # 1) 下载图片
     try:
         fetched = await fetch_image(body.image_url)
     except (ImageFetchError, httpx.HTTPError) as e:
@@ -105,17 +99,17 @@ async def recommend_scheme(
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"无法解析图片文件: {e}") from e
 
-    # 2) 提取 CLIP 向量（线程池执行，避免阻塞事件循环）
+    # 2) CLIP 提特征（线程池，避免阻塞事件循环）
     embedding = await asyncio.to_thread(get_clip_embedding, image)
 
-    # 3) pgvector 相似检索
+    # 3) pgvector 搜
     search_results = await vector_store.search(embedding, top_k=body.top_k or 5)
 
     if not search_results:
         logger.info("CLIP 检索无结果", image_url=body.image_url)
         return SchemeRecommendOut(schemes=[], source="clip")
 
-    # 4) 查询对应的方案
+    # 4) 查方案
     product_ids = [item["product_id"] for item in search_results]
     schemes_result = await db.execute(
         select(ImageScheme).where(ImageScheme.product_id.in_(product_ids))
@@ -138,7 +132,7 @@ async def recommend_scheme(
             created_at=s.created_at.isoformat() if s.created_at else None,
         ))
 
-    # 组装返回结果（similarity = 1 - distance）
+    # 组装返回（similarity = 1 - distance）
     schemes = []
     for item in search_results:
         similarity = round(1.0 - item["distance"], 4)
@@ -161,14 +155,9 @@ async def recommend_fusion(
     body: SchemeFusionRecommendRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """三维度融合方案推荐
+    """三维度融合推荐：同品类最优(45%) + 跨品类迁移(25%) + 市场本地化(30%)
 
-    融合三个维度：
-    1. 同品类历史最优（权重 45%）—— 同品类中 CTR 最高的方案风格
-    2. 跨品类风格迁移趋势（权重 25%）—— 其他品类中表现优异、具迁移潜力的风格
-    3. 市场本地化偏好（权重 30%）—— 目标市场中表现最好的风格
-
-    每个推荐结果附带可解释的量化理由。
+    每个推荐附带可解释理由，方便运营直接看。
     """
     from app.services.scheme_recommender import recommend_schemes
 

@@ -1,13 +1,4 @@
-"""
-MinIO 初始化脚本
-
-- 创建存储桶
-- 上传占位图片（可选，用于Demo）
-- 设置存储桶策略
-
-用法：
-    docker compose run backend python scripts/init_minio.py
-"""
+"""MinIO 初始化脚本 —— 创建存储桶并设置策略。"""
 
 import sys
 from pathlib import Path
@@ -23,7 +14,6 @@ from app.config import settings
 def init_minio():
     print("=== MinIO 初始化 ===\n")
 
-    # 解析 endpoint
     endpoint = settings.MINIO_ENDPOINT
     secure = settings.MINIO_SECURE
 
@@ -35,7 +25,6 @@ def init_minio():
         secure=secure,
     )
 
-    # 检查连接
     try:
         client.list_buckets()
         print("✓ MinIO 连接成功")
@@ -45,10 +34,10 @@ def init_minio():
 
     # 创建存储桶
     buckets = [
-        settings.MINIO_BUCKET,  # product-images
-        settings.MINIO_PRIVATE_BUCKET,  # 草稿与审核中图片，保持私有
-        "raw-images",            # 原始上传图
-        "reference-images",      # 参考图
+        settings.MINIO_BUCKET,
+        settings.MINIO_PRIVATE_BUCKET,
+        "raw-images",
+        "reference-images",
     ]
 
     for bucket_name in buckets:
@@ -62,7 +51,7 @@ def init_minio():
         except S3Error as e:
             print(f"✗ Bucket '{bucket_name}' 创建失败: {e}")
 
-    # 设置 public 读策略（for serving images directly）
+    # 设置 public-read 策略
     bucket_name = settings.MINIO_BUCKET
     public_policy = f"""
 {{

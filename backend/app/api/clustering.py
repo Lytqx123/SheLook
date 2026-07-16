@@ -1,4 +1,4 @@
-"""聚类分析 API —— K-Means / HDBSCAN 聚类 + 可视化"""
+"""聚类分析 API —— K-Means / HDBSCAN 聚类 + t-SNE 可视化"""
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,12 +20,7 @@ async def run_clustering(
     body: ClusteringRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """执行聚类分析。
-
-    根据 product_embeddings 表中的 CLIP 向量进行聚类分析，
-    支持按品类和市场筛选，可选择 K-Means 或 HDBSCAN 算法。
-    返回各簇聚合统计、轮廓系数、t-SNE 二维坐标（含簇 ID）及簇中心。
-    """
+    """对 product_embeddings 做聚类，返回簇统计 + 轮廓系数 + t-SNE"""
     from app.services.clustering_service import run_clustering as _run
 
     result = await _run(

@@ -1,6 +1,4 @@
-/**
- * TanStack Query Hooks —— 与 lib/api.ts 完全对齐
- */
+// TanStack Query hooks，跟lib/api.ts一一对应
 
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -13,7 +11,7 @@ import type {
   MetricsBatchRequest, ModelRollbackRequest,
 } from "@/types";
 
-// ====== 商品 ======
+// 商品
 export function useProducts(page = 1, pageSize = 20) {
   return useQuery({
     queryKey: ["products", { page, pageSize }],
@@ -52,7 +50,7 @@ export function usePublishProduct() {
   });
 }
 
-// ====== 方案推荐 ======
+// 方案推荐
 export function useRecommendSchemes() {
   return useMutation({
     mutationFn: (params: { imageUrl: string; topK?: number }) =>
@@ -65,7 +63,7 @@ export function useRecommendSchemesFusion() {
   });
 }
 
-// ====== 生成任务 ======
+// 生成任务
 export function useStartGeneration() {
   const qc = useQueryClient();
   return useMutation({
@@ -85,7 +83,7 @@ export function useGenerationStatus(imageId: number, pollInterval = 5000) {
   });
 }
 
-// ====== 审核 ======
+// 审核
 export function useReviewQueue(page = 1, pageSize = 20, marketVariant?: string) {
   return useQuery({
     queryKey: ["review-queue", { page, pageSize, marketVariant }],
@@ -109,7 +107,7 @@ export function useAutoReview() {
   });
 }
 
-// ====== 效果预估 ======
+// 效果预估
 export function usePrediction(imageId: number, enabled = true) {
   return useQuery({
     queryKey: ["prediction", imageId],
@@ -125,7 +123,7 @@ export function usePredictionHistory(imageId: number) {
   });
 }
 
-// ====== A/B 实验 ======
+// A/B 实验
 export function useExperiments(page = 1, pageSize = 20, status?: string) {
   return useQuery({
     queryKey: ["experiments", { page, pageSize, status }],
@@ -188,7 +186,7 @@ export function useUpdateExperimentTraffic() {
   });
 }
 
-// ====== 数据飞轮 ======
+// 数据飞轮
 export function useTriggerFlywheelSync() {
   return useMutation({ mutationFn: () => api.triggerFlywheelSync() });
 }
@@ -196,7 +194,7 @@ export function useTriggerFlywheelRetrain() {
   return useMutation({ mutationFn: () => api.triggerFlywheelRetrain() });
 }
 
-// ====== 运营看板 ======
+// 运营看板
 export function useDashboardSummary(params?: { market?: string; category?: string }) {
   return useQuery({
     queryKey: ["dashboard-summary", params],
@@ -223,7 +221,7 @@ export function useStyleInsight() {
   });
 }
 
-// ====== 审计日志 ======
+// 审计日志
 export function useAuditLogs(params?: {
   request_id?: string; image_id?: number; operation?: string;
   status?: string; start_date?: string; end_date?: string;
@@ -242,7 +240,7 @@ export function useAuditTrace(requestId: string) {
   });
 }
 
-// ====== 视频生成 ======
+// 视频生成
 export function useGenerateVideo() {
   return useMutation({
     mutationFn: (params: VideoGenerateParams) => api.generateVideo(params),
@@ -255,7 +253,7 @@ export function useVideoProviders() {
   });
 }
 
-// ====== 公平性分析 ======
+// 公平性分析
 export function useSkinToneDistribution(params?: { market?: string; category?: string }) {
   return useQuery({
     queryKey: ["skin-tone", params],
@@ -275,19 +273,19 @@ export function useCheckSchemeFairness() {
   });
 }
 
-// ====== 聚类分析 ======
+// 聚类分析
 export function useRunClustering() {
   return useMutation({
     mutationFn: (body: ClusteringRunRequest) => api.runClustering(body),
   });
 }
 
-// ====== 平台导出 ======
+// 平台导出
 export function useExportPlatforms() {
   return useQuery({
     queryKey: ["export-platforms"],
     queryFn: () => api.getExportPlatforms(),
-    staleTime: Infinity, // 平台规格极少变动
+    staleTime: Infinity,
   });
 }
 
@@ -298,7 +296,7 @@ export function useExportImage() {
   });
 }
 
-// ====== 认证 ======
+// 认证
 export function useLogin() {
   const qc = useQueryClient();
   return useMutation({
@@ -321,7 +319,7 @@ export function useCurrentUser() {
   });
 }
 
-// ====== 以图搜图 ======
+// 以图搜图
 export function useSearchByImage() {
   return useMutation({
     mutationFn: (params: { image_url: string; top_k?: number; category?: string; market?: string }) =>
@@ -336,21 +334,21 @@ export function useSearchByImageUpload() {
   });
 }
 
-// ====== 图文匹配验证 ======
+// 图文匹配验证
 export function useCheckTextMatch() {
   return useMutation({
     mutationFn: (body: TextMatchRequest) => api.checkTextMatch(body),
   });
 }
 
-// ====== 九维审美启发式评估 ======
+// 九维审美启发式评估
 export function useEvaluateAesthetic() {
   return useMutation({
     mutationFn: (body: VisionRewardRequest) => api.evaluateAesthetic(body),
   });
 }
 
-// ====== 数据指标 ======
+// 数据指标
 export function useMetricsStats() {
   return useQuery({
     queryKey: ["metrics-stats"],
@@ -378,7 +376,7 @@ export function useBatchUpsertMetrics() {
   });
 }
 
-// ====== 预测模型版本管理 ======
+// 预测模型版本管理
 export function useModelVersions() {
   return useQuery({
     queryKey: ["model-versions"],
@@ -394,7 +392,7 @@ export function useRollbackModel() {
   });
 }
 
-// ====== 审计日志详情 ======
+// 审计日志详情
 export function useAuditLogDetail(logId: number | null) {
   return useQuery({
     queryKey: ["audit-log-detail", logId],
@@ -403,7 +401,7 @@ export function useAuditLogDetail(logId: number | null) {
   });
 }
 
-// ====== 供应商历史报告 ======
+// 供应商历史报告
 export function useSupplierReports(supplierId: string, limit = 20, offset = 0) {
   return useQuery({
     queryKey: ["supplier-reports", supplierId, limit, offset],
@@ -412,7 +410,7 @@ export function useSupplierReports(supplierId: string, limit = 20, offset = 0) {
   });
 }
 
-// ====== WebSocket 生成进度（实时事件驱动）======
+// WebSocket 生成进度——轮询不够快，加ws实时推
 export type WsConnectionState = "idle" | "connecting" | "open" | "closed" | "error";
 
 export interface WsGenerationMessage {
@@ -423,11 +421,7 @@ export interface WsGenerationMessage {
   [key: string]: unknown;
 }
 
-/**
- * 实时 WebSocket 生成进度 hook。
- * 作为轮询的补充：收到 completed 消息时立即触发 query 刷新，降低完成感知延迟。
- * WebSocket 失败时静默降级为轮询模式。
- */
+// ws挂了就降级回轮询，别影响主流程
 export function useGenerationWebSocket(imageId: number) {
   const qc = useQueryClient();
   const [connectionState, setConnectionState] = useState<WsConnectionState>("idle");
@@ -452,13 +446,12 @@ export function useGenerationWebSocket(imageId: number) {
       try {
         const data: WsGenerationMessage = JSON.parse(event.data);
         setLastMessage(data);
-        // 收到任意消息即触发轮询查询刷新，确保数据最新
         qc.invalidateQueries({ queryKey: ["generation", "status", imageId] });
         if (data.status === "completed" || data.status === "failed") {
           ws.close();
         }
       } catch {
-        // 忽略解析异常
+        // 解析不了就算了
       }
     };
 

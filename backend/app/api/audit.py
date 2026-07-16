@@ -1,9 +1,4 @@
-"""审计日志 API —— 合规回溯与监管审计接口
-
-符合《生成式AI服务深度合成监管细则（2026修订版）》要求：
-- 支持按 request_id / 时间范围 / 模型 回溯
-- 全量日志查询（分页）
-"""
+"""审计日志 API —— 合规回溯用的，监管那边会查"""
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
@@ -25,11 +20,7 @@ async def get_audit_logs(
     limit: int = Query(100, ge=1, le=1000, description="每页条数"),
     offset: int = Query(0, ge=0, description="偏移量"),
 ):
-    """查询审计日志（按条件筛选 + 分页）
-
-    用于合规回溯和监管审计。
-    数据保留期：≥180天（符合 ISO 27001 Annex A.8.2.3）。
-    """
+    """审计日志分页查询，按条件筛选"""
     from app.core.audit import query_audit_logs
 
     try:
@@ -55,7 +46,7 @@ async def get_audit_log_detail(
     log_id: int,
     request: Request,
 ):
-    """查询单条审计日志详情"""
+    """查单条日志详情"""
     from sqlalchemy import select
 
     from app.db.session import async_session_factory
@@ -95,10 +86,7 @@ async def trace_by_request_id(
     request_id: str,
     request: Request,
 ):
-    """按 request_id 追踪全链路日志
-
-    返回一次请求的完整操作链路（API → Celery Task → DB）
-    """
+    """按 request_id 追踪全链路 —— API → Celery Task → DB"""
     from app.core.audit import query_audit_logs
 
     result = await query_audit_logs(request_id=request_id)

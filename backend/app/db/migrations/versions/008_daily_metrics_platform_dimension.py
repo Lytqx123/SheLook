@@ -30,7 +30,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_constraint("daily_metrics_image_date_platform_key", "daily_metrics", type_="unique")
-    # 多平台记录回退为单维度前，保留每图每天优先级最高的一条。
+    # 多平台记录回退为单维度前，保留每图每天优先级最高的一条
     op.execute(
         """
         DELETE FROM daily_metrics newer

@@ -1,11 +1,4 @@
-/**
- * API 客户端 —— 与后端 FastAPI 路由完全对齐
- *
- * 后端路由对照：
- *   /api/products /api/schemes /api/generation /api/review
- *   /api/prediction /api/experiments /api/dashboard /api/flywheel
- *   /api/audit /api/video /api/clustering /api/fairness /api/auth
- */
+// API 客户端，跟后端FastAPI一一对应的
 
 import type {
   Product, ProductCreate, ProductList,
@@ -34,7 +27,7 @@ import type {
 
 const API_BASE = "/api";
 
-/** 从 localStorage 读取 JWT token（客户端渲染环境下可用） */
+// 从localStorage拿token，服务端拿不到就返回null
 function getAuthToken(): string | null {
   if (typeof window === "undefined") return null;
   try {
@@ -78,7 +71,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  // ====== 商品 CRUD ======
+  // 商品 CRUD
   getProducts: (params?: Record<string, string>) => {
     const qs = params ? "?" + new URLSearchParams(params).toString() : "";
     return request<ProductList>(`/products${qs}`);
@@ -93,7 +86,7 @@ export const api = {
   publishProduct: (id: number) =>
     request<Product>(`/products/${id}/publish`, { method: "PATCH" }),
 
-  // ====== 方案推荐 ======
+  // 方案推荐
   recommendSchemes: (imageUrl: string, topK = 5) =>
     request<SchemeRecommendOut>("/schemes/recommend", {
       method: "POST",
@@ -104,7 +97,7 @@ export const api = {
       method: "POST", body: JSON.stringify(body),
     }),
 
-  // ====== 图片生成 ======
+  // 图片生成
   startGeneration: (body: GenerateRequest) =>
     request<GenerateResponse>("/generation", {
       method: "POST", body: JSON.stringify(body),
@@ -112,7 +105,7 @@ export const api = {
   getGenerationStatus: (imageId: number) =>
     request<GenerationStatus>(`/generation/${imageId}/status`),
 
-  // ====== 审核 ======
+  // 审核
   getReviewQueue: (page = 1, pageSize = 20, marketVariant?: string) => {
     let qs = `?page=${page}&page_size=${pageSize}`;
     if (marketVariant) qs += `&market_variant=${marketVariant}`;
@@ -125,7 +118,7 @@ export const api = {
   autoReviewImage: (imageId: number) =>
     request<AutoReviewResult>(`/review/auto-review/${imageId}`, { method: "POST" }),
 
-  // ====== 效果预估 ======
+  // 效果预估
   predictImage: (imageId: number) =>
     request<PredictionResponse>("/prediction", {
       method: "POST",
@@ -138,7 +131,7 @@ export const api = {
       `/prediction/history/${imageId}`
     ),
 
-  // ====== A/B 实验 ======
+  // A/B 实验
   listExperiments: (page = 1, pageSize = 20, status?: string) => {
     let qs = `?page=${page}&page_size=${pageSize}`;
     if (status) qs += `&status=${status}`;
@@ -158,13 +151,13 @@ export const api = {
   updateExperimentTraffic: (id: number) =>
     request<TrafficUpdateResult>(`/experiments/${id}/update-traffic`, { method: "POST" }),
 
-  // ====== 数据飞轮 ======
+  // 数据飞轮
   triggerFlywheelSync: () =>
     request<FlywheelSyncResponse>("/flywheel/sync", { method: "POST" }),
   triggerFlywheelRetrain: () =>
     request<FlywheelRetrainResponse>("/flywheel/retrain", { method: "POST" }),
 
-  // ====== 运营看板 ======
+  // 运营看板
   getDashboardSummary: (params?: { market?: string; category?: string }) => {
     const qs = new URLSearchParams();
     if (params?.market) qs.set("market", params.market);
@@ -179,7 +172,7 @@ export const api = {
   getStyleInsight: () =>
     request<StyleInsightData>("/dashboard/style_insight"),
 
-  // ====== 审计日志 ======
+  // 审计日志
   getAuditLogs: (params?: {
     request_id?: string; image_id?: number; operation?: string;
     status?: string; start_date?: string; end_date?: string;
@@ -197,7 +190,7 @@ export const api = {
   getAuditTrace: (requestId: string) =>
     request<AuditTraceResponse>(`/audit/trace/${requestId}`),
 
-  // ====== 视频生成 ======
+  // 视频生成
   generateVideo: (params: VideoGenerateParams) =>
     request<VideoGenerateResponse>("/video/generate", {
       method: "POST", body: JSON.stringify(params),
@@ -205,7 +198,7 @@ export const api = {
   getVideoProviders: () =>
     request<VideoProvidersResponse>("/video/providers"),
 
-  // ====== 公平性分析 ======
+  // 公平性分析
   getSkinToneDistribution: (params?: { market?: string; category?: string }) => {
     const qs = new URLSearchParams();
     if (params?.market) qs.set("market", params.market);
@@ -218,13 +211,13 @@ export const api = {
   checkSchemeFairness: (schemeId: number) =>
     request<SchemeFairnessItem>(`/fairness/check-scheme/${schemeId}`, { method: "POST" }),
 
-  // ====== 聚类分析 ======
+  // 聚类分析
   runClustering: (body: ClusteringRunRequest) =>
     request<ClusteringRunResponse>("/clustering/run", {
       method: "POST", body: JSON.stringify(body),
     }),
 
-  // ====== 平台导出 ======
+  // 平台导出
   getExportPlatforms: () =>
     request<{ platforms: { key: string; label: string; size: string; allow_ai_primary: boolean }[] }>("/generation/platforms"),
   exportImage: (imageId: number, platform: string) =>
@@ -236,7 +229,7 @@ export const api = {
       return res.blob();
     }),
 
-  // ====== 供应商分析 ======
+  // 供应商分析
   analyzeSupplierImage: (params: { image_url: string; category: string; market: string; supplier_id?: string }) =>
     request<SupplierReport>("/supplier/upload-and-analyze", {
       method: "POST", body: JSON.stringify(params),
@@ -246,7 +239,7 @@ export const api = {
       `/supplier/report/${supplierId}?limit=${limit}&offset=${offset}`
     ),
 
-  // ====== 认证 ======
+  // 认证
   login: (body: LoginRequest) =>
     request<TokenResponse>("/auth/token", { method: "POST", body: JSON.stringify(body) }),
   getAuthConfig: () => request<AuthConfigResponse>("/auth/config"),
@@ -259,7 +252,7 @@ export const api = {
     }),
   getCurrentUser: () => request<UserResponse>("/auth/me"),
 
-  // ====== 以图搜图 ======
+  // 以图搜图
   searchByImage: (params: { image_url: string; top_k?: number; category?: string; market?: string }) => {
     const qs = new URLSearchParams();
     qs.set("image_url", params.image_url);
@@ -290,19 +283,19 @@ export const api = {
     });
   },
 
-  // ====== 图文匹配验证 ======
+  // 图文匹配验证
   checkTextMatch: (body: TextMatchRequest) =>
     request<TextMatchResponse>("/generation/check-text-match", {
       method: "POST", body: JSON.stringify(body),
     }),
 
-  // ====== 九维审美启发式评估 ======
+  // 九维审美启发式评估
   evaluateAesthetic: (body: VisionRewardRequest) =>
     request<VisionRewardResponse>("/generation/evaluate-aesthetic", {
       method: "POST", body: JSON.stringify(body),
     }),
 
-  // ====== 数据指标 ======
+  // 数据指标
   batchUpsertMetrics: (body: MetricsBatchRequest, apiKey?: string) => {
     const headers: Record<string, string> = {};
     if (apiKey) headers["X-API-Key"] = apiKey;
@@ -322,14 +315,14 @@ export const api = {
     });
   },
 
-  // ====== 预测模型版本管理 ======
+  // 预测模型版本管理
   getModelVersions: () => request<ModelVersionsResponse>("/prediction/model-versions"),
   rollbackModel: (body: ModelRollbackRequest) =>
     request<ModelRollbackResponse>("/prediction/rollback", {
       method: "POST", body: JSON.stringify(body),
     }),
 
-  // ====== 审计日志详情 ======
+  // 审计日志详情
   getAuditLogDetail: (logId: number) =>
     request<AuditLogDetail>(`/audit/logs/${logId}`),
 };

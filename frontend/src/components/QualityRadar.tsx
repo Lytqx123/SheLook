@@ -9,7 +9,7 @@ interface QualityRadarProps {
   failedDimensions?: string[];
 }
 
-/** 评分维度中文标签（v2：匹配新 L2 维度名） */
+// v2 评分维度名映射
 const DIM_LABELS: Record<string, string> = {
   sharpness: "清晰度",
   lighting_uniformity: "光影均匀",
@@ -20,14 +20,13 @@ const DIM_LABELS: Record<string, string> = {
   overall_quality: "整体质量",
 };
 
-/** 审核状态映射 */
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
   auto_approved: { label: "自动通过", color: "green" },
   manual_pending: { label: "待人工审核", color: "orange" },
   rejected: { label: "已驳回", color: "red" },
 };
 
-// ====== SVG 雷达图参数 ======
+// SVG 雷达图参数——后面优化一下用canvas算了
 const SVG_W = 280;
 const SVG_H = 240;
 const CX = 140;
@@ -35,7 +34,7 @@ const CY = 115;
 const R_MAX = 75;
 const GRID_LEVELS = [0.25, 0.5, 0.75, 1.0];
 
-/** 计算第 i 个维度的角度（从正上方开始，顺时针） */
+// 第i个维度的角度（从正上方顺时针）
 function angleOf(index: number, total: number): number {
   return -Math.PI / 2 + (index * 2 * Math.PI) / total;
 }

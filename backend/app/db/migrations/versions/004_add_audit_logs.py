@@ -3,10 +3,6 @@
 Revision ID: 004
 Revises: 003
 Create Date: 2026-07-12
-
-变更：
-  1. 新建 audit_logs 表（AI 生成全量审计）
-  2. generated_images.c2pa_manifest 已有（001 建表），无需变更
 """
 
 from collections.abc import Sequence
@@ -14,7 +10,6 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-# revision identifiers, used by Alembic.
 revision: str = "004"
 down_revision: str | None = "003"
 branch_labels: str | Sequence[str] | None = None
@@ -66,7 +61,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
 
-    # 复合索引：按时间 + 操作类型 快速回溯
+    # 复合索引：按时间 + 操作类型快速回溯
     op.create_index("ix_audit_logs_created_operation", "audit_logs",
                     ["created_at", "operation"])
 

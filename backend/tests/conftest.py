@@ -5,7 +5,7 @@ from unittest import mock
 
 import pytest
 
-# ---- 在导入 app 模块之前设置测试环境变量 ----
+# 测试环境变量，在所有 import 之前
 os.environ["APP_ENV"] = "test"
 os.environ["REDIS_URL"] = "redis://localhost:6379/15"
 os.environ["ENABLE_AUTH"] = "false"
@@ -23,7 +23,7 @@ def _override_env() -> None:
 
 @pytest.fixture
 def mock_redis():
-    """全局 mock redis.asyncio.from_url，避免测试连接真实 Redis"""
+    """全局 mock redis，避免测试连接真实 Redis"""
     with mock.patch("redis.asyncio.from_url") as mock_from_url:
         mock_client = mock.AsyncMock()
         mock_from_url.return_value = mock_client
@@ -32,7 +32,7 @@ def mock_redis():
 
 @pytest.fixture
 def client(mock_redis):
-    """创建同步 TestClient；应用内部仍按真实 ASGI 生命周期运行。"""
+    """创建同步 TestClient。"""
     from fastapi.testclient import TestClient
 
     from app.main import app

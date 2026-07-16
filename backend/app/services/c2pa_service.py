@@ -1,4 +1,4 @@
-"""使用官方 C2PA SDK 对生成资产签名、嵌入并验证 Content Credentials。"""
+"""用官方 C2PA SDK 签名、嵌入并验证 Content Credentials。"""
 
 import hashlib
 import io
@@ -31,7 +31,7 @@ def build_manifest_definition(
     product_id: int | None = None,
     scheme_id: int | None = None,
 ) -> dict[str, Any]:
-    """只记录 prompt 哈希，不把商业提示词明文写入公开凭证。"""
+    """构建 C2PA manifest 定义，prompt 只存哈希不存明文。"""
     generated_at = datetime.now(UTC).isoformat()
     params = generation_params or {}
     return {
@@ -102,7 +102,10 @@ def sign_generated_asset(
     product_id: int | None = None,
     scheme_id: int | None = None,
 ) -> SignedAsset:
-    """签名并把 manifest store 嵌入图片；签名后立即用 Reader 验证。"""
+    """签名并嵌入 manifest store，签名后立即用 Reader 验证。
+    
+    FIXME: callback_signer 的算法分支不够优雅，后续统一成 JOSE 格式。
+    """
     if not settings.C2PA_ENABLED:
         if settings.C2PA_REQUIRED:
             raise RuntimeError("C2PA_REQUIRED=true 但 C2PA_ENABLED=false")
@@ -127,7 +130,7 @@ def sign_generated_asset(
         private_key = serialization.load_pem_private_key(key_path.read_bytes(), password=None)
 
         def callback_signer(payload: bytes) -> bytes:
-            """官方 callback signer 形式便于后续替换为 KMS/HSM。"""
+            """callback 形式便于后续换成 KMS/HSM。"""
             hash_by_algorithm = {
                 "ES256": hashes.SHA256,
                 "ES384": hashes.SHA384,
@@ -185,11 +188,12 @@ def sign_generated_asset(
 
 
 def generate_c2pa_manifest(*args: Any, **kwargs: Any) -> str:
-    """旧 API 不再生成伪凭证，避免把普通 JSON 误称为 C2PA。"""
+    """旧接口，不再生成伪凭证。请用 sign_generated_asset()。"""
     raise RuntimeError("请使用 sign_generated_asset() 对真实资产签名并嵌入凭证")
 
 
 def verify_c2pa_manifest_v2(manifest_str: str | None) -> dict[str, Any]:
+    """解析并校验 C2PA manifest：JSON 结构 + 加密验证 + AI 来源声明。"""
     checks: list[dict[str, Any]] = []
     issues: list[dict[str, str]] = []
     if not manifest_str:
@@ -242,6 +246,7 @@ def verify_c2pa_manifest_v2(manifest_str: str | None) -> dict[str, Any]:
 
 
 def extract_disclosure_metadata(c2pa_manifest: str | None) -> dict[str, Any]:
+    """从 manifest 中提取 AI 生成断言数据。"""
     if not c2pa_manifest:
         return {}
     try:

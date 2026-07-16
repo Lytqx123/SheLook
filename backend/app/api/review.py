@@ -20,14 +20,9 @@ async def auto_review_image(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    """AI 自动审核 —— 使用 Gemini Flash 预审图片质量
-
-    返回结构化诊断报告（分数/问题维度/改进建议）。
-    不会自动修改审核状态，需要人工确认。
-    """
+    """AI 预审 —— Gemini Flash 跑一遍，给报告，不直接改状态"""
     from app.services.auto_reviewer import auto_review_image, format_review_for_ui
 
-    # 查询图片
     result = await db.execute(select(GeneratedImage).where(GeneratedImage.id == image_id))
     image = result.scalar_one_or_none()
     if not image:
@@ -36,7 +31,7 @@ async def auto_review_image(
     from app.services.storage_service import resolve_image_url
     image_url = await resolve_image_url(image)
 
-    # 查询关联商品信息
+    # 捞关联商品信息
     product_category = ""
     product_title = ""
     try:
@@ -61,7 +56,7 @@ async def auto_review_image(
         product_title=product_title,
     )
 
-    # 写入审计日志
+    # 写审计日志
     try:
         from app.core.audit import audit_operation
         trace_id = getattr(request.state, "audit_trace_id", None)
@@ -89,7 +84,7 @@ async def get_review_queue(
     page_size: int = 20,
     market_variant: str | None = None,
 ):
-    """获取待审队列 —— 按生成时间倒序，支持市场筛选"""
+    """待审队列，按生成时间倒序，可选市场筛选"""
     query = select(GeneratedImage).where(
         GeneratedImage.review_status == ReviewStatus.MANUAL_PENDING
     )
@@ -142,7 +137,7 @@ async def decide_review(
     if not image:
         raise NotFoundError(detail=f"图片 #{image_id} 不存在")
 
-    # 更新图片审核状态
+    # 更新审核状态
     action_enum = ReviewAction(body.action)
     if action_enum == ReviewAction.APPROVED:
         image.review_status = ReviewStatus.AUTO_APPROVED
@@ -170,8 +165,7 @@ async def decide_review(
         reviewer=body.reviewer_id,
     )
 
-    # ---- 审核完成后回写供应商视觉一致性得分 ----
-    # 关联链：GeneratedImage → ImageScheme → Product.supplier_id
+    # ---- 审核后回写供应商评分 ----
     try:
         from app.models import ImageScheme, Product
         from app.services.brand_service import update_supplier_score
@@ -193,7 +187,7 @@ async def decide_review(
                 violations=score_result.get("total_violations"),
             )
     except Exception as e:
-        # 评分回写失败不阻断审核流程
+        # 回写失败不阻断审核
         logger.warning(
             "供应商评分回写失败",
             error=str(e),

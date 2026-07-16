@@ -21,7 +21,7 @@ import { api } from "@/lib/api";
 import type { SchemeOut, FusionDimension, ImageSearchResponse, ImageSearchResult } from "@/types";
 import { L1_DIM_LABELS, L3_LABELS, CATEGORY_OPTIONS_SELECT, MARKET_OPTIONS_SELECT } from "@/constants";
 
-// 三维度融合推荐 —— 维度中文标签 + 权重展示
+// 三维度融合推荐 —— 中文标签和颜色
 const FUSION_DIM_LABELS: Record<FusionDimension, string> = {
   same_category: "同品类最优",
   cross_category: "跨品类迁移",
@@ -65,7 +65,7 @@ export default function PublishContent() {
     (item) => item.schemes
   ) ?? [];
 
-  // ====== Step 0: 创建商品 ======
+  // Step 0: 创建商品
   const handleCreateProduct = async (values: {
     title: string;
     category: string;
@@ -111,7 +111,7 @@ export default function PublishContent() {
     }
   };
 
-  // ====== Step 1: 选择方案 ======
+  // Step 1: 选择方案
   const handleToggleScheme = (scheme: SchemeOut) => {
     setSelectedSchemes((prev) => {
       const exists = prev.find((s) => s.id === scheme.id);
@@ -124,7 +124,7 @@ export default function PublishContent() {
     });
   };
 
-  // ====== 以图搜图 ======
+  // 以图搜图
   const handleSearchByUrl = async () => {
     if (!searchImageUrl.trim()) { message.warning("请输入图片 URL"); return; }
     setSearchResults(null);
@@ -204,7 +204,7 @@ export default function PublishContent() {
     }
   };
 
-  // ====== 渲染 ======
+  // 渲染
   return (
       <div className="space-y-6" style={{ maxWidth: 1280, margin: "0 auto" }}>
         <PageHeader title="发品工作台" subtitle="创建商品 → AI推荐方案 → 智能生成 → 质检出品" />
@@ -540,7 +540,7 @@ export default function PublishContent() {
               </p>
             </Card>
 
-            {/* ====== 三维度融合推荐（战略层：风格建议 + 可解释理由）====== */}
+            {/* 三维度融合推荐（战略层：风格建议 + 可解释理由） */}
             {recommendFusion.isPending ? (
               <Card>
                 <div className="flex items-center gap-2 mb-2">
@@ -640,7 +640,7 @@ export default function PublishContent() {
               </Card>
             ) : null}
 
-            {/* ====== CLIP 相似度检索（战术层：可选具体方案）====== */}
+            {/* CLIP 相似度检索（战术层：可选具体方案） */}
             {recommendSchemes.isPending ? (
               <Card className="text-center py-12">
                 <p className="text-gray-400">正在通过 CLIP 检索最适配的具体方案...</p>
@@ -732,7 +732,7 @@ export default function PublishContent() {
   );
 }
 
-// ====== 单任务生成进度组件 ======
+// 单任务生成进度
 
 function TaskGenerateProgress({ imageId }: { imageId: number }) {
   const { data: genStatus } = useGenerationStatus(imageId, 3000);
@@ -758,7 +758,7 @@ function TaskGenerateProgress({ imageId }: { imageId: number }) {
   );
 }
 
-// ====== 单任务质检结果组件 ======
+// 单任务质检结果
 
 function TaskResultView({
   imageId,

@@ -1,11 +1,7 @@
 """
-Visual Reward 打分服务 —— L1-L3 三级质检（v2）
+Visual Reward 打分服务 —— L1-L3 三级质检
 
-参考 VisionReward 多维度框架（基础质量/内容相关性/美学价值）
-v2 升级：L2 质量评估采用学术级算法
-- 清晰度: FFT 高频能量占比（替代灰度方差近似）
-- 色彩和谐度: HSV 色相分布熵（替代 RGB 标准差均值）
-- 信息密度: Laplacian 方差（新增维度）
+L1 合规 / L2 质量（学术级算法）/ L3 审美，采用 FFT + HSV 熵 + Laplacian 方案。
 """
 
 import logging
@@ -19,7 +15,6 @@ from app.services.image_analysis_utils import (
     histogram_entropy_score,
     hsv_entropy,
     is_url,
-    # v2 学术级算法
     laplacian_variance,
     lighting_uniformity_score,
     load_image,
@@ -31,17 +26,7 @@ logger = logging.getLogger(__name__)
 
 # L1 合规层：规则引擎
 def l1_compliance_check(image_path: str | Path) -> dict:
-    """
-    L1 合规检查
-
-    检查项：
-    - 分辨率 >= 800x800
-    - 主体占比 >= 40%（简化：图像文件大小判断）
-    - 尺寸比例偏差 < 5%
-
-    Returns:
-        {"passed": bool, "checks": [...], "issues": [...]}
-    """
+    """L1 合规检查：分辨率 >= 800x800，比例 1:1±5%，文件 > 10KB"""
     issues = []
 
     try:
@@ -82,7 +67,7 @@ def l1_compliance_check(image_path: str | Path) -> dict:
                 "passed": True,
             })
 
-        # 文件大小合理性检查（URL 时用 Content-Length，本地用 stat）
+        # 文件大小合理性检查
         if is_url(image_path):
             try:
                 from app.services.image_fetcher import fetch_image_sync
@@ -126,48 +111,23 @@ def l1_compliance_check(image_path: str | Path) -> dict:
     }
 
 
-# L2 质量层：多维度打分（v2 学术级算法）
+# L2 质量层：多维度打分
 def l2_quality_scoring(image_path: str | Path) -> dict:
-    """
-    L2 质量评分 —— v2 学术级算法版本
+    """L2 质量评分（5 维度加权平均）
 
-    维度1：清晰度（FFT 高频能量占比）
-    维度2：光影均匀度（亮度直方图标准差）
-    维度3：色彩和谐度（HSV 色相分布熵）
-    维度4：构图平衡（中心区域亮度与边缘差异）
-    维度5：信息密度（Laplacian 方差）
+    维度：清晰度(0.25) / 光影均匀度(0.15) / 色彩和谐度(0.25) / 构图平衡(0.15) / 信息密度(0.20)
 
-    Returns:
-        {
-            "overall_score": float (0-100),
-            "dimensions": {
-                "sharpness": float,
-                "lighting_uniformity": float,
-                "color_harmony": float,
-                "composition_balance": float,
-                "information_density": float,
-            },
-            "verdict": "auto_approved" | "manual_pending" | "rejected"
-        }
+    这段 AI 写的权重是拍脑袋定的，后面有真实数据了得重新校准。
     """
     try:
         pixels = load_image_pixels(image_path)
         if pixels is None:
             raise ValueError("图片像素加载失败")
 
-        # 1. 清晰度（FFT 高频能量占比，权重 0.25）
         sharpness = fft_high_freq_energy(pixels)
-
-        # 2. 光影均匀度（亮度标准差越小越均匀，权重 0.15）
         lighting_uniformity = lighting_uniformity_score(pixels)
-
-        # 3. 色彩和谐度（HSV 色相分布熵，权重 0.25）
         color_harmony = hsv_entropy(pixels)
-
-        # 4. 构图平衡（中心 vs 四角亮度差异，权重 0.15）
         composition_balance = composition_balance_score(pixels)
-
-        # 5. 信息密度（Laplacian 方差，权重 0.20）
         information_density = laplacian_variance(pixels)
 
         dimension_scores = {
@@ -178,7 +138,6 @@ def l2_quality_scoring(image_path: str | Path) -> dict:
             "information_density": round(float(information_density), 1),
         }
 
-        # 综合分 = 加权平均
         weights = {
             "sharpness": 0.25,
             "lighting_uniformity": 0.15,
@@ -188,7 +147,6 @@ def l2_quality_scoring(image_path: str | Path) -> dict:
         }
         overall = sum(dimension_scores[k] * weights[k] for k in dimension_scores)
 
-        # 判定
         if overall >= 75:
             verdict = "auto_approved"
         elif overall >= 60:
@@ -214,12 +172,7 @@ def l2_quality_scoring(image_path: str | Path) -> dict:
 
 # L3 审美层：美学评分
 def l3_aesthetic_scoring(image_path: str | Path) -> dict:
-    """
-    L3 审美评分（简化版：基于图像统计特征）
-
-    评估构图、光影美学、色彩和谐度
-    返回 0-100 分的审美分
-    """
+    """L3 审美评分（三分法则 + 色彩饱和度 + 光影层次）"""
     try:
         pixels = load_image_pixels(image_path)
         if pixels is None:
@@ -227,10 +180,9 @@ def l3_aesthetic_scoring(image_path: str | Path) -> dict:
 
         gray = np.mean(pixels, axis=2)
 
-        # 三分法构图评分（简化：偏离中心的吸引力）
+        # 三分法构图评分
         h, w = gray.shape
         h_third, w_third = h // 3, w // 3
-        # 检查三分线交点区域的亮度对比
         points = [
             (h_third, w_third),
             (h_third, 2 * w_third),
@@ -245,12 +197,12 @@ def l3_aesthetic_scoring(image_path: str | Path) -> dict:
                 contrast_scores.append(min(1.0, patch_std / 50))
         composition_score = np.mean(contrast_scores) * 100 if contrast_scores else 50
 
-        # 色彩和谐度（饱和度适中为佳）
+        # 色彩和谐度
         r, g, b = pixels[:, :, 0], pixels[:, :, 1], pixels[:, :, 2]
         saturation = np.std([np.mean(r), np.mean(g), np.mean(b)])
         saturation_score = min(100, max(0, 100 - abs(saturation - 40) * 2))
 
-        # 光影层次（直方图熵）
+        # 光影层次
         lighting_score = histogram_entropy_score(pixels)
 
         overall_aesthetic = (composition_score + saturation_score + lighting_score) / 3
@@ -274,29 +226,10 @@ def full_quality_pipeline(
     product_description: str = "",
     tags: list[str] | None = None,
 ) -> dict:
-    """
-    执行完整 L1 → L2 → L3 质检流水线
-
-    Args:
-        image_path: 图片路径或 URL
-        product_title: 商品标题（可选，用于 L1 图文匹配验证）
-        product_description: 商品描述（可选）
-        tags: 商品标签（可选）
-
-    Returns:
-        {
-            "l1": {...},
-            "l2": {...},
-            "l3": {...},
-            "overall_score": float,
-            "review_status": "auto_approved" | "manual_pending" | "rejected",
-            "failed_dimensions": [...],
-        }
-    """
-    # L1 合规
+    """执行完整 L1 → L2 → L3 质检流水线"""
     l1 = l1_compliance_check(image_path)
 
-    # L1 图文匹配验证（当商品标题提供时）
+    # L1 图文匹配验证
     if product_title and l1["passed"]:
         try:
             from app.services.image_text_matcher import check_image_text_match_sync
@@ -330,7 +263,6 @@ def full_quality_pipeline(
                 })
         except Exception as e:
             logger.error(f"L1 图文匹配验证失败: {e}")
-            # 图文匹配失败不阻塞整体流程
 
     if not l1["passed"]:
         return {
@@ -342,13 +274,10 @@ def full_quality_pipeline(
             "failed_dimensions": [i["dimension"] for i in l1["issues"]],
         }
 
-    # L2 质量
     l2 = l2_quality_scoring(image_path)
-
-    # L3 审美
     l3 = l3_aesthetic_scoring(image_path)
 
-    # L2 综合分 × 0.7 + L3 审美分 × 0.3
+    # L2 × 0.7 + L3 × 0.3
     overall = l2["overall_score"] * 0.7 + l3.get("aesthetic_score", 0) * 0.3
 
     if overall >= 75:
@@ -358,7 +287,6 @@ def full_quality_pipeline(
     else:
         review_status = "rejected"
 
-    # 收集不合格维度（<60 分的维度）
     failed_dimensions = [
         dim for dim, score in l2["dimensions"].items() if score < 60
     ]
@@ -374,19 +302,7 @@ def full_quality_pipeline(
 
 
 def evaluate_quality(image_url: str, scheme: object | None = None) -> dict | None:
-    """
-    质量评估统一入口（供 Celery 任务调用）
-
-    支持 HTTP(S) URL 和本地路径。URL 会通过 httpx 下载到内存后评估。
-    仅当真实评估失败时才降级为保守低分（50.0），标记为需人工复审。
-
-    Args:
-        image_url: 图片 URL 或本地路径
-        scheme: 关联的方案对象（用于风格一致性校验，预留）
-
-    Returns:
-        {"scores": {...}, "overall": float} 或 None
-    """
+    """质量评估统一入口（供 Celery 任务调用），评估失败时降级为保守低分。"""
     try:
         result = full_quality_pipeline(image_url)
         return {
@@ -434,16 +350,7 @@ def evaluate_quality(image_url: str, scheme: object | None = None) -> dict | Non
 
 
 def calculate_significance(metrics_a: dict, metrics_b: dict) -> dict:
-    """
-    计算 A/B 两组指标的统计显著性
-
-    Args:
-        metrics_a: {"ctr": float, "impressions": int, "clicks": int}
-        metrics_b: {"ctr": float, "impressions": int, "clicks": int}
-
-    Returns:
-        {"p_value": float, "winner": "A"|"B"|None, "is_significant": bool}
-    """
+    """计算 A/B 两组指标的统计显著性"""
     from app.services.attribution import calculate_p_value
 
     ctr_a = metrics_a.get("ctr", 0)

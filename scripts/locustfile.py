@@ -1,7 +1,7 @@
-"""SheLook Locust 场景。
+"""SheLook Locust 压测场景。
 
-默认只执行已认证的只读请求。预测和生图会写入业务数据，只有显式设置
-SHELOOK_ENABLE_MUTATIONS=true 且提供对应 ID 时才会启用。
+默认只跑已认证的只读请求。预测和生图会写入数据，
+需要设 SHELOOK_ENABLE_MUTATIONS=true 并提供对应 ID 才启用。
 """
 
 from __future__ import annotations

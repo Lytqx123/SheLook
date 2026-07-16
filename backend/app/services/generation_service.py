@@ -140,6 +140,7 @@ class GenerationService:
             failures.append(f"sd-webui: {exc}")
 
         if settings.APP_ENV != "production" and settings.ALLOW_GENERATION_MOCKS:
+            # 开发环境保底，productions 不允许
             return _development_mock(width, height)
         raise GenerationUnavailableError("所有生图通道失败；" + " | ".join(failures))
 
@@ -156,7 +157,9 @@ class GenerationService:
         scheme_id: int | None = None,
         generation_params: dict | None = None,
     ) -> dict[str, Any]:
+        """生成图片 + C2PA 签名 + 存入对象存储"""
         asset = await self._generate_provider_asset(prompt, category, negative_prompt, width, height)
+        # C2PA 签名里面嵌了 prompt 和 product_id，调 sign_generated_asset 同步
         signed = await asyncio.to_thread(
             sign_generated_asset,
             asset.data,
@@ -196,6 +199,7 @@ class GenerationService:
             )
             return {**result, "index": index}
 
+        # TODO: 并发太高容易触发供应商限流，后面加个 semaphore
         results = await asyncio.gather(
             *(_one(index, scheme) for index, scheme in enumerate(schemes)),
             return_exceptions=True,

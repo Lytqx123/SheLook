@@ -1,13 +1,10 @@
-# ============================================================
-# SheLook Production 环境覆盖配置
+# SheLook Production 覆盖配置
+# 用法: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 #
-# 使用: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-#
-# 与 staging 的差异:
-#   - 不暴露后端/Flower 端口到宿主机
-#   - 限制资源上限
-#   - 生产级别的健康检查间隔
-# ============================================================
+# 和 staging 的区别：
+#   不暴露后端 / Flower 端口
+#   限制资源上限
+#   生产级健康检查间隔
 
 services:
   backend:

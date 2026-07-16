@@ -117,7 +117,7 @@ def upgrade() -> None:
         """
     )
 
-    # 旧迁移只在 ORM 声明了默认值，数据库列本身没有 DEFAULT，导致大量时间戳为 NULL。
+    # 旧迁移只在 ORM 设了默认值，数据库列没有 DEFAULT，补一下
     for table_name, column_name in _TIMESTAMP_COLUMNS:
         op.execute(
             sa.text(f'UPDATE "{table_name}" SET "{column_name}" = now() '
@@ -131,7 +131,7 @@ def upgrade() -> None:
             server_default=sa.func.now(),
         )
 
-    # ON CONFLICT(product_id) 只有在 product_id 唯一时才合法。历史重复项保留最新一条。
+    # ON CONFLICT(product_id) 要求 product_id 唯一，去重保留最新
     op.execute(
         """
         DELETE FROM product_embeddings older

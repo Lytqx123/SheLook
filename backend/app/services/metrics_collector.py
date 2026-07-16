@@ -1,7 +1,4 @@
-"""电商平台数据采集适配器
-
-定义 PlatformMetricsCollector 抽象基类，实现三个平台的适配器，
-支持从 Shopee / Lazada / Amazon 拉取每日指标数据并映射为内部 schema。
+"""电商平台数据采集适配器 —— Shopee / Lazada / Amazon 三平台。
 
 所有适配器使用 httpx 异步 HTTP 客户端，支持代理和超时配置。
 """
@@ -22,17 +19,11 @@ from app.config import settings
 from app.core.logging import logger
 from app.schemas.metrics import MetricsBatchItem, MetricsRawItem
 
-# 默认 HTTP 超时（秒）
 DEFAULT_TIMEOUT = 30.0
 
 
 class PlatformMetricsCollector(ABC):
-    """电商平台数据采集适配器抽象基类
-
-    子类需实现：
-        fetch_daily_metrics() — 从平台 API 拉取原始指标
-        map_to_internal_schema() — 将原始数据映射为 MetricsBatchItem
-    """
+    """电商平台数据采集适配器抽象基类"""
 
     platform: str = "unknown"
 
@@ -41,27 +32,18 @@ class PlatformMetricsCollector(ABC):
         self.timeout = timeout
 
     async def _get_client(self) -> httpx.AsyncClient:
-        """获取或创建 httpx 异步客户端（懒加载 + 复用）"""
         if self._client is None:
             self._client = httpx.AsyncClient(timeout=self.timeout)
         return self._client
 
     async def close(self):
-        """释放 HTTP 客户端连接"""
         if self._client:
             await self._client.aclose()
             self._client = None
 
     @abstractmethod
     async def fetch_daily_metrics(self, date_range: tuple[date, date]) -> list[MetricsRawItem]:
-        """从平台拉取指定日期范围的原始指标
-
-        Args:
-            date_range: (start_date, end_date) 日期范围（含起止）
-
-        Returns:
-            原始指标数据列表
-        """
+        """从平台拉取指定日期范围的原始指标"""
         ...
 
     def map_to_internal_schema(
@@ -69,16 +51,7 @@ class PlatformMetricsCollector(ABC):
         raw_item: MetricsRawItem,
         image_id: int,
     ) -> MetricsBatchItem:
-        """将平台原始数据映射为内部 upsert schema
-
-        子类需实现平台特有字段到通用字段的映射逻辑。
-
-        Args:
-            raw_item: 平台原始数据
-
-        Returns:
-            MetricsBatchItem（可直接用于 metrics API 写入）
-        """
+        """将平台原始数据映射为内部 upsert schema"""
         return MetricsBatchItem(
             image_id=image_id,
             date=raw_item.date,
@@ -93,18 +66,10 @@ class PlatformMetricsCollector(ABC):
         )
 
 
-# ============================================================
-# Shopee 适配器
-# ============================================================
+# --- Shopee 适配器
 
 class ShopeeCollector(PlatformMetricsCollector):
-    """Shopee Open API v2 数据采集适配器
-
-    调用 GetItemPerformance + GetOrderList 获取数据。
-    认证方式：Partner ID + Partner Key + Shop ID + Access Token。
-
-    文档: https://open.shopee.com/documents
-    """
+    """Shopee Open API v2 数据采集适配器"""
 
     platform = "shopee"
 
@@ -116,7 +81,6 @@ class ShopeeCollector(PlatformMetricsCollector):
         self.shop_id = settings.SHOPEE_SHOP_ID
         self.access_token = settings.SHOPEE_ACCESS_TOKEN
 
-        # API 端点（按 Shopee 官方文档）
         API_HOSTS = {
             "sg": "https://partner.shopeemobile.com",
             "my": "https://partner.shopeemobile.com",
@@ -131,10 +95,7 @@ class ShopeeCollector(PlatformMetricsCollector):
         self.api_host = API_HOSTS.get(self.region, "https://partner.shopeemobile.com")
 
     async def fetch_daily_metrics(self, date_range: tuple[date, date]) -> list[MetricsRawItem]:
-        """从 Shopee API 拉取指标数据
-
-        使用店铺授权端点获取商品表现数据。
-        """
+        """从 Shopee API 拉取指标数据"""
         from datetime import timedelta
 
         if not all((self.partner_id, self.partner_key, self.shop_id, self.access_token)):
@@ -185,7 +146,7 @@ class ShopeeCollector(PlatformMetricsCollector):
                         ctr=float(perf.get("ctr", 0)) if perf.get("ctr") else None,
                         cvr=float(perf.get("cvr", 0)) if perf.get("cvr") else None,
                         add_to_cart_rate=float(perf.get("add_to_cart_conversion_rate", 0)) if perf.get("add_to_cart_conversion_rate") else None,
-                        return_rate=None,  # Shopee 不直接返回退货率
+                        return_rate=None,
                         revenue=float(perf.get("revenue", 0)) if perf.get("revenue") else None,
                     ))
 
@@ -200,10 +161,7 @@ class ShopeeCollector(PlatformMetricsCollector):
         return items
 
     def map_to_internal_schema(self, raw_item: MetricsRawItem, image_id: int) -> MetricsBatchItem:
-        """Shopee 字段映射到内部 schema
-
-        external_id (item_id) → 由 external_listing_mappings 显式映射到 image_id。
-        """
+        """Shopee 字段映射到内部 schema"""
         return super().map_to_internal_schema(raw_item, image_id)
 
     def _generate_sign(
@@ -213,12 +171,7 @@ class ShopeeCollector(PlatformMetricsCollector):
         access_token: str,
         shop_id: str,
     ) -> str:
-        """生成 Shopee API 请求签名（HMAC-SHA256）
-
-        Shopee 店铺级 API 签名基础字符串：
-            partner_id + api_path + timestamp + access_token + shop_id
-            签名结果 = HMAC-SHA256(基础字符串, partner_key) → hex 小写
-        """
+        """生成 Shopee API 请求签名（HMAC-SHA256）"""
         base_string = f"{self.partner_id}{api_path}{timestamp}{access_token}{shop_id}"
         return hmac.new(
             self.partner_key.encode(),
@@ -227,17 +180,13 @@ class ShopeeCollector(PlatformMetricsCollector):
         ).hexdigest()
 
 
-# ============================================================
-# Lazada 适配器
-# ============================================================
+# --- Lazada 适配器
 
 class LazadaCollector(PlatformMetricsCollector):
     """Lazada Open Platform API 数据采集适配器
 
-    Lazada 公开 `/products/get` 只提供商品资料，不提供 listing 级
-    impressions/clicks/CTR。为避免把不存在的字段写成 0 或伪造指标，
-    当前只保留显式失败入口；Lazada 数据应通过 `/api/metrics/batch`
-    从获授权的 Business Advisor/Ads 数据源导入。
+    Lazada 公开接口只提供商品资料，不提供 listing 级 impressions/clicks/CTR。
+    数据应通过 /api/metrics/batch 从获授权的 Business Advisor 导入。
     """
 
     platform = "lazada"
@@ -249,24 +198,14 @@ class LazadaCollector(PlatformMetricsCollector):
         )
 
     def map_to_internal_schema(self, raw_item: MetricsRawItem, image_id: int) -> MetricsBatchItem:
-        """Lazada 字段映射到内部 schema
-
-        external_id (SkuId) → image_id 的映射需通过 external_id_mapping 表。
-        """
+        """Lazada SkuId → image_id 映射"""
         return super().map_to_internal_schema(raw_item, image_id)
 
-# ============================================================
-# Amazon 适配器
-# ============================================================
+
+# --- Amazon 适配器
 
 class AmazonCollector(PlatformMetricsCollector):
-    """Amazon SP-API (Selling Partner API) 数据采集适配器
-
-    通过 Reports API 请求 GET_SALES_AND_TRAFFIC_REPORT。
-    认证方式：LWA (Login with Amazon) OAuth 2.0。
-
-    文档: https://developer-docs.amazon.com/sp-api
-    """
+    """Amazon SP-API (Selling Partner API) 数据采集适配器"""
 
     platform = "amazon"
 
@@ -288,10 +227,7 @@ class AmazonCollector(PlatformMetricsCollector):
         self._access_token_expires_at = 0.0
 
     async def _get_access_token(self) -> str:
-        """获取 Amazon SP-API 访问令牌（LWA OAuth 2.0）
-
-        使用 refresh_token 换取短期 access_token。
-        """
+        """获取 Amazon SP-API 访问令牌（LWA OAuth 2.0）"""
         if self._access_token and time.monotonic() < self._access_token_expires_at:
             return self._access_token
         if not all((self.refresh_token, self.client_id, self.client_secret)):
@@ -385,8 +321,7 @@ class AmazonCollector(PlatformMetricsCollector):
                 MetricsRawItem(
                     external_id=external_id,
                     date=report_date,
-                    # Sales & Traffic 报告没有 listing click count。保留 0/None，
-                    # 绝不把 sessions、pageViews 或 unitsOrdered 冒充 clicks/CTR。
+                    # Sales & Traffic 报告没有 listing click count
                     impressions=0,
                     clicks=0,
                     ctr=None,
@@ -397,10 +332,7 @@ class AmazonCollector(PlatformMetricsCollector):
         return items
 
     async def fetch_daily_metrics(self, date_range: tuple[date, date]) -> list[MetricsRawItem]:
-        """按日拉取 Amazon Sales and Traffic 报告。
-
-        官方报告请求默认限额较低，因此一次同步最多处理配置的天数。
-        """
+        """按日拉取 Amazon Sales and Traffic 报告。"""
         from datetime import timedelta
 
         total_days = (date_range[1] - date_range[0]).days + 1
@@ -425,29 +357,14 @@ class AmazonCollector(PlatformMetricsCollector):
         return items
 
     def map_to_internal_schema(self, raw_item: MetricsRawItem, image_id: int) -> MetricsBatchItem:
-        """Amazon 字段映射到内部 schema
-
-        external_id (ASIN) → image_id 的映射通过 asin_mapping 表查找。
-        """
+        """Amazon ASIN → image_id 映射"""
         return super().map_to_internal_schema(raw_item, image_id)
 
 
-# ============================================================
-# 工厂函数
-# ============================================================
+# --- 工厂函数
 
 def get_collector(platform: Literal["shopee", "lazada", "amazon"]) -> PlatformMetricsCollector:
-    """获取平台数据采集器实例
-
-    Args:
-        platform: 平台标识 (shopee | lazada | amazon)
-
-    Returns:
-        PlatformMetricsCollector 子类实例
-
-    Raises:
-        ValueError: 不支持的平台
-    """
+    """获取平台数据采集器实例"""
     collectors = {
         "shopee": ShopeeCollector,
         "lazada": LazadaCollector,

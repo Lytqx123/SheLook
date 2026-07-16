@@ -1,34 +1,25 @@
-# ============================================================
 # SheLook 服务编排
 #
-# 一键部署:
+# 一键部署（推荐）:
 #   .\setup.ps1          (Windows)
 #   ./setup.sh           (Linux/macOS)
 #
-# 手动部署:
-#   1. copy .env.example .env
-#   2. 编辑 .env 填入 API Key
-#   3. docker compose build
-#   4. docker compose up -d postgres redis minio
-#   5. docker compose run --rm backend alembic upgrade head
-#   6. docker compose run --rm backend python scripts/init_minio.py
-#   7. docker compose run --rm backend python scripts/seed_data.py
-#   8. docker compose up -d
+# 手撸:
+#   1. 复制 .env.example → .env，填好 API Key
+#   2. docker compose build
+#   3. docker compose up -d postgres redis minio   # 先起基础服务
+#   4. docker compose run --rm backend alembic upgrade head
+#   5. docker compose run --rm backend python scripts/init_minio.py
+#   6. docker compose run --rm backend python scripts/seed_data.py
+#   7. docker compose up -d                        # 全量启动
 #
 # 可选 Profile:
-#   docker compose --profile sd-webui up -d    # 本地降级生图 (需 GPU)
-#   docker compose --profile pgbouncer up -d   # 数据库连接池
+#   --profile sd-webui    # 本地 SD 生图（要 GPU）
+#   --profile pgbouncer   # 数据库连接池
 #
-# 停止:
-#   .\setup.ps1 -Stop          # 仅停止
-#   docker compose down -v     # 停止并清除数据
-#
-# 核心服务 (11 个):
-#   postgres / redis / minio / backend / celery-worker
-#   celery-beat / flower / frontend / nginx / prometheus / grafana
-# 可选服务 (2 个):
-#   pgbouncer (连接池) / sd-webui (本地降级生图)
-# ============================================================
+# 停止/清理:
+#   docker compose down         # 只停
+#   docker compose down -v      # 停 + 删数据卷（注意！）
 
 # ---- YAML Anchor: 日志配置 ----
 x-logging: &default-logging
@@ -154,9 +145,7 @@ x-backend-depends: &backend-depends
     condition: service_healthy
 
 services:
-  # ========================================
-  # 数据层
-  # ========================================
+  # ==== 数据层 ====
 
   postgres:
     image: pgvector/pgvector:0.8.2-pg17
@@ -235,9 +224,7 @@ services:
         limits:
           memory: 512M
 
-  # ========================================
-  # PgBouncer 连接池 (可选，--profile pgbouncer)
-  # ========================================
+  # ==== PgBouncer（可选，--profile pgbouncer）====
   pgbouncer:
     image: edoburu/pgbouncer:1.24
     container_name: shelook-pgbouncer
@@ -276,9 +263,7 @@ services:
     profiles:
       - pgbouncer
 
-  # ========================================
-  # SD WebUI 降级生图 (可选，--profile sd-webui，需 GPU)
-  # ========================================
+  # ==== SD WebUI（可选，--profile sd-webui，要 GPU）====
   sd-webui:
     image: ghcr.io/abdullahrizwan/stable-diffusion-webui:latest
     container_name: shelook-sd-webui
@@ -307,9 +292,7 @@ services:
     profiles:
       - sd-webui
 
-  # ========================================
-  # 应用层
-  # ========================================
+  # ==== 应用层 ====
 
   backend:
     build:
@@ -445,9 +428,7 @@ services:
         limits:
           memory: 512M
 
-  # ========================================
-  # 反向代理
-  # ========================================
+  # ==== 反向代理 ====
 
   nginx:
     image: nginx:1.30.3-alpine
@@ -477,9 +458,7 @@ services:
         limits:
           memory: 128M
 
-  # ========================================
-  # 可观测性 (Phase 3)
-  # ========================================
+  # ==== 可观测性 ====
 
   prometheus:
     image: prom/prometheus:v3.8.0
@@ -544,8 +523,8 @@ services:
         limits:
           memory: 256M
 
-  # 可选：Postgres / Redis / Nginx / Node Exporters（按需启用）
-  # 启用方式：取消注释对应 exporter 服务块
+  # 可选 exporter（按需取消注释）
+  # postgres-exporter / redis-exporter 等
   #
   # postgres-exporter:
   #   image: quay.io/prometheuscommunity/postgres-exporter:v0.17.0
@@ -562,9 +541,7 @@ services:
   #   ports:
   #     - "9121:9121"
 
-# ========================================
-# 持久化卷
-# ========================================
+# ==== 持久化卷 ====
 
 volumes:
   postgres_data:

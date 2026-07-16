@@ -1,45 +1,23 @@
 ﻿<#
-.SYNOPSIS
-    SheLook 一键部署脚本 (Windows)
-.DESCRIPTION
-    自动完成端口检测、Docker 环境校验、.env 配置、镜像构建、
-    基础服务启动、数据库迁移、MinIO 初始化、演示数据填充、
-    全部服务启动及健康检查。
-.PARAMETER SkipBuild
-    跳过镜像构建（复用已构建的镜像）
-.PARAMETER SkipSeed
-    跳过 Mock 演示数据填充
-.PARAMETER NoCache
-    强制无缓存重新构建镜像，等价于 Docker Compose 的 no-cache 选项
-.PARAMETER WithSDWebUI
-    启用 SD WebUI 本地降级生图（需 NVIDIA GPU）
-.PARAMETER WithPgbouncer
-    启用 PgBouncer 数据库连接池
-.PARAMETER Clean
-    清理现有部署（含数据卷）后全新部署
-.PARAMETER Stop
-    仅停止所有服务
-.PARAMETER Restart
-    重启全部服务（不重建镜像、不清数据）
-.PARAMETER Logs
-    跟踪查看指定服务日志（如 -Logs backend）
-.PARAMETER Status
-    查看全部服务运行状态
-.PARAMETER Update
-    拉取最新代码后重新构建并重启（保留数据）
-.PARAMETER Env
-    选择 dev、staging 或 prod；自动使用对应私有环境文件，并为 staging/prod 加载 Compose 覆盖配置
-.EXAMPLE
-    .\setup.ps1                    # 全新部署
-    .\setup.ps1 -SkipBuild         # 跳过构建快速启动
-    .\setup.ps1 -Clean -NoCache    # 清理后无缓存重建
-    .\setup.ps1 -WithSDWebUI       # 启用本地生图
-    .\setup.ps1 -Stop              # 停止服务
-    .\setup.ps1 -Restart           # 重启服务
-    .\setup.ps1 -Logs backend      # 查看后端日志
-    .\setup.ps1 -Status            # 查看状态
-    .\setup.ps1 -Update            # 更新部署
-    .\setup.ps1 -Env staging       # 使用 staging 环境和覆盖配置
+SheLook 一键部署脚本 — Windows 版
+
+干的事情：端口检测、Docker 检查、.env 配置、镜像构建、
+基础服务启动、数据库迁移、MinIO 初始化、演示数据、全部启动 + 健康检查。
+
+常用命令（懒人版）：
+  .\setup.ps1                    # 全新部署
+  .\setup.ps1 -SkipBuild         # 跳过构建（用已有镜像）
+  .\setup.ps1 -SkipSeed          # 跳过演示数据
+  .\setup.ps1 -NoCache           # 无缓存重新 build
+  .\setup.ps1 -WithSDWebUI       # 开本地 SD 生图（要 GPU）
+  .\setup.ps1 -WithPgbouncer     # 开 PgBouncer 连接池
+  .\setup.ps1 -Clean             # 清干净重来（会删数据卷！）
+  .\setup.ps1 -Stop              # 只停服务
+  .\setup.ps1 -Restart           # 重启（不重新 build）
+  .\setup.ps1 -Logs backend      # 看某个服务的日志
+  .\setup.ps1 -Status            # 看状态
+  .\setup.ps1 -Update            # git pull + build + 重启（保留数据）
+  .\setup.ps1 -Env staging       # 指定环境，自动加载覆盖 compose 文件
 #>
 
 param(
@@ -92,9 +70,7 @@ if ($Env) {
     }
 }
 
-# ============================================================
-# 输出辅助
-# ============================================================
+# 输出辅助 —— 懒得每次手写颜色代码
 function Write-Step { param([string]$Message) Write-Host "`n>>> $Message" -ForegroundColor Cyan }
 function Write-OK   { param([string]$Message) Write-Host "  [OK]   $Message" -ForegroundColor Green }
 function Write-Warn { param([string]$Message) Write-Host "  [WARN] $Message" -ForegroundColor Yellow }
@@ -102,9 +78,7 @@ function Write-Err  { param([string]$Message) Write-Host "  [ERROR] $Message" -F
 function Write-Info { param([string]$Message) Write-Host "  [INFO] $Message" -ForegroundColor Gray }
 function Write-Dot  { param([string]$Message) Write-Host "  ..     $Message" -ForegroundColor DarkGray }
 
-# ============================================================
-# 构建 profile 参数
-# ============================================================
+# 构建 profile 参数（按需拼接 --profile 选项）
 function Get-ProfileArgs {
     $args = @()
     if ($WithSDWebUI)   { $args += "--profile", "sd-webui" }
@@ -117,9 +91,7 @@ function Invoke-Compose {
     & docker compose @script:ComposeFiles @ComposeArgs
 }
 
-# ============================================================
-# 等待服务健康
-# ============================================================
+# 等健康检查 —— 轮询 docker inspect 到超时
 function Wait-Healthy {
     param(
         [string[]]$Services,
@@ -153,9 +125,7 @@ function Wait-Healthy {
     return $true, @()
 }
 
-# ============================================================
-# 端口占用检测
-# ============================================================
+# 检测端口有没有被占
 function Test-Ports {
     $ports = @{
         80   = "Nginx"
@@ -182,9 +152,7 @@ function Test-Ports {
     return $conflicts
 }
 
-# ============================================================
-# 磁盘空间检测
-# ============================================================
+# 检测磁盘空间
 function Test-DiskSpace {
     param([int]$MinGB = 10)
     $drive = (Get-Location).Drive.Name
@@ -196,9 +164,8 @@ function Test-DiskSpace {
     return $true, $freeGB
 }
 
-# ============================================================
-# 指令: -Status
-# ============================================================
+# ---- 子命令模式 ----
+# --Status
 if ($Status) {
     Write-Step "服务运行状态"
     $composeArgs = @("compose") + $script:ComposeFiles + (Get-ProfileArgs) + @("ps", "--format", "table")
@@ -206,18 +173,14 @@ if ($Status) {
     exit $LASTEXITCODE
 }
 
-# ============================================================
-# 指令: -Logs
-# ============================================================
+# --Logs
 if ($Logs) {
     Write-Host "`n>>> 跟踪 $Logs 日志 (Ctrl+C 退出)`n" -ForegroundColor Cyan
     Invoke-Compose logs -f $Logs
     exit $LASTEXITCODE
 }
 
-# ============================================================
-# 指令: -Stop
-# ============================================================
+# --Stop
 if ($Stop) {
     Write-Step "停止所有 SheLook 服务..."
     $composeArgs = @("compose") + $script:ComposeFiles + (Get-ProfileArgs) + @("down")
@@ -226,9 +189,7 @@ if ($Stop) {
     exit 0
 }
 
-# ============================================================
-# 指令: -Restart
-# ============================================================
+# --Restart
 if ($Restart) {
     Write-Step "重启全部服务..."
     $profileArgs = Get-ProfileArgs
@@ -244,9 +205,7 @@ if ($Restart) {
     exit 0
 }
 
-# ============================================================
-# 指令: -Update
-# ============================================================
+# --Update
 if ($Update) {
     Write-Step "更新部署 (保留数据)"
 
@@ -281,9 +240,7 @@ if ($Update) {
     exit 0
 }
 
-# ============================================================
-# 1/9  环境检查
-# ============================================================
+# ==== 1/9  环境检查 ====
 Write-Step "1/9  环境检查"
 
 # Docker 运行状态
@@ -325,9 +282,7 @@ if ($portConflicts.Count -gt 0) {
     Write-OK "所需端口均无冲突"
 }
 
-# ============================================================
-# 清理模式
-# ============================================================
+# --Clean 模式
 if ($Clean) {
     Write-Step "清理现有部署..."
     $profileArgs = Get-ProfileArgs
@@ -336,9 +291,7 @@ if ($Clean) {
     Write-OK "已清理所有容器和数据卷"
 }
 
-# ============================================================
-# 2/9  .env 配置
-# ============================================================
+# ==== 2/9  .env 配置 ====
 Write-Step "2/9  .env 配置"
 
 if (-not (Test-Path ".env")) {
@@ -404,9 +357,7 @@ foreach ($key in $optionalKeys.Keys) {
     }
 }
 
-# ============================================================
-# 3/9  构建 Docker 镜像
-# ============================================================
+# ==== 3/9  构建 Docker 镜像 ====
 Write-Step "3/9  构建 Docker 镜像"
 
 if ($SkipBuild) {
@@ -431,9 +382,7 @@ if ($SkipBuild) {
     Write-OK "镜像构建完成 (耗时 ${buildMin}m ${buildRem}s)"
 }
 
-# ============================================================
-# 4/9  启动基础服务
-# ============================================================
+# ==== 4/9  启动基础服务 (PostgreSQL / Redis / MinIO) ====
 Write-Step "4/9  启动基础服务 (PostgreSQL / Redis / MinIO)"
 
 Invoke-Compose up -d postgres redis minio
@@ -456,9 +405,7 @@ if (-not $ok) {
 }
 Write-OK "PostgreSQL / Redis / MinIO 全部健康"
 
-# ============================================================
-# 5/9  数据库迁移
-# ============================================================
+# ==== 5/9  数据库迁移 ====
 Write-Step "5/9  数据库迁移 (Alembic)"
 
 Write-Info "执行 alembic upgrade head..."
@@ -470,9 +417,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-OK "数据库迁移完成 (6 个版本已应用)"
 
-# ============================================================
-# 6/9  MinIO 初始化
-# ============================================================
+# ==== 6/9  MinIO 初始化 ====
 Write-Step "6/9  MinIO 存储初始化"
 
 Invoke-Compose run --rm backend python scripts/init_minio.py 2>$null
@@ -482,9 +427,7 @@ if ($LASTEXITCODE -ne 0) {
     Write-OK "MinIO 存储桶已就绪 (product-images)"
 }
 
-# ============================================================
-# 7/9  演示数据
-# ============================================================
+# ==== 7/9  演示数据 ====
 Write-Step "7/9  演示数据填充"
 
 if ($SkipSeed) {
@@ -499,9 +442,7 @@ if ($SkipSeed) {
     }
 }
 
-# ============================================================
-# 8/9  启动全部应用服务
-# ============================================================
+# ==== 8/9  启动全部应用服务 ====
 Write-Step "8/9  启动全部应用服务"
 
 $profileArgs = Get-ProfileArgs
@@ -539,9 +480,7 @@ if (-not $ok) {
     Write-OK "全部应用服务健康就绪"
 }
 
-# ============================================================
-# 9/9  验证 & 汇总
-# ============================================================
+# ==== 9/9  验证 & 汇总 ====
 Write-Step "9/9  验证与汇总"
 
 # 后端 API 验证
@@ -620,9 +559,7 @@ foreach ($svc in $allServices) {
     Write-Host $urlStr -ForegroundColor Cyan
 }
 
-# ============================================================
-# 完成
-# ============================================================
+# ==== 完成 ====
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Green
 Write-Host "  SheLook 部署完成!" -ForegroundColor Green

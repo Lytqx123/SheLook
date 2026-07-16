@@ -1,10 +1,5 @@
 """
-三维度方案推荐引擎
-
-融合三个维度生成差异化方案推荐：
-1. 同品类历史最优 —— 查同品类中历史 CTR 最高的方案风格
-2. 跨品类风格迁移趋势 —— 发现近期在多品类表现上升的风格
-3. 市场本地化偏好 —— 按目标市场过滤风格偏好
+三维度方案推荐引擎 —— 同品类 / 跨品类 / 市场本地化融合推荐。
 
 每个推荐结果附带可解释的量化理由。
 """
@@ -23,35 +18,17 @@ from app.models import (
     ReviewStatus,
 )
 
-# 三维度权重（可按业务调参）
 WEIGHT_SAME_CATEGORY = 0.45
 WEIGHT_CROSS_CATEGORY = 0.25
 WEIGHT_MARKET = 0.30
 
-# 聚合时要求的最小曝光量，低于此值视为样本不足不参与排序
 MIN_IMPRESSIONS = 200
 
 
 async def _dim1_same_category_best(
     db: AsyncSession, category: str, top_k: int = 5
 ) -> list[dict]:
-    """维度一：同品类历史 CTR 最优方案
-
-    SQL 逻辑：
-      SELECT scheme_name, style_tags,
-             SUM(dm.clicks) / NULLIF(SUM(dm.impressions), 0) as avg_ctr,
-             SUM(dm.impressions) as total_imp
-      FROM image_schemes ish
-      JOIN generated_images gi ON gi.scheme_id = ish.id
-      JOIN daily_metrics dm ON dm.image_id = gi.id
-      JOIN products p ON p.id = ish.product_id
-      WHERE p.category = :category
-        AND gi.review_status = 'auto_approved'
-      GROUP BY scheme_name, style_tags
-      HAVING SUM(dm.impressions) >= :min_imp
-      ORDER BY avg_ctr DESC
-      LIMIT :top_k
-    """
+    """维度一：同品类历史 CTR 最优方案"""
     stmt = (
         select(
             ImageScheme.id,
@@ -98,23 +75,8 @@ async def _dim2_cross_category_trending(
 ) -> list[dict]:
     """维度二：跨品类风格迁移趋势
 
-    找出在"其他品类"中近期 CTR 表现优秀、但尚未在本品类大量使用的风格。
-    核心思路：风格在 A 品类火了，很可能迁移到 B 品类也有效。
-
-    SQL 逻辑：
-      SELECT scheme_name, style_tags,
-             SUM(dm.clicks) / NULLIF(SUM(dm.impressions), 0) as avg_ctr,
-             COUNT(DISTINCT p.category) as category_count
-      FROM image_schemes ish
-      JOIN generated_images gi ON gi.scheme_id = ish.id
-      JOIN daily_metrics dm ON dm.image_id = gi.id
-      JOIN products p ON p.id = ish.product_id
-      WHERE p.category != :category          -- 排除当前品类
-        AND gi.review_status = 'auto_approved'
-      GROUP BY scheme_name, style_tags
-      HAVING SUM(dm.impressions) >= :min_imp
-      ORDER BY avg_ctr DESC
-      LIMIT :top_k
+    找出在其他品类中 CTR 表现优秀但尚未在本品类大量使用的风格。
+    思路：A 品类火了的风格，B 品类大概率也能用。
     """
     stmt = (
         select(
@@ -163,21 +125,7 @@ async def _dim3_market_preference(
     """维度三：市场本地化偏好
 
     按目标市场过滤，找出该市场 CTR 表现最好的风格。
-    同一风格在不同市场的表现差异很大（如欧美偏好街拍、中东偏好保守场景）。
-
-    SQL 逻辑：
-      SELECT scheme_name, style_tags,
-             SUM(dm.clicks) / NULLIF(SUM(dm.impressions), 0) as avg_ctr,
-             AVG(dm.return_rate) as avg_return_rate
-      FROM image_schemes ish
-      JOIN generated_images gi ON gi.scheme_id = ish.id
-      JOIN daily_metrics dm ON dm.image_id = gi.id
-      WHERE gi.market_variant = :market
-        AND gi.review_status = 'auto_approved'
-      GROUP BY scheme_name, style_tags
-      HAVING SUM(dm.impressions) >= :min_imp
-      ORDER BY avg_ctr DESC
-      LIMIT :top_k
+    同一风格在不同市场差异很大（欧美偏好街拍、中东偏好保守场景）。
     """
     stmt = (
         select(
@@ -249,31 +197,7 @@ async def recommend_schemes(
     market: str,
     top_k: int = 5,
 ) -> dict[str, Any]:
-    """三维度融合方案推荐主入口
-
-    Args:
-        db: 异步数据库会话
-        category: 商品品类（如"连衣裙"）
-        market: 目标市场（如"us"/"eu"/"me"/"seasia"）
-        top_k: 每个维度返回的方案数
-
-    Returns:
-        {
-            "recommendations": [
-                {
-                    "scheme_name": "...",
-                    "style_tags": {...},
-                    "recommendation_score": float,   # 0-1 归一化
-                    "dimension": "same_category|cross_category|market",
-                    "reason": "可解释的量化理由",
-                    "metrics": {...}
-                }
-            ],
-            "weights": {"same_category": 0.45, "cross_category": 0.25, "market": 0.30},
-            "source": "three_dim_fusion",
-        }
-    """
-    # 顺序查三个维度（AsyncSession 不支持并发使用）
+    """三维度融合方案推荐主入口"""
     dim1 = await _dim1_same_category_best(db, category, top_k)
     dim2 = await _dim2_cross_category_trending(db, category, top_k)
     dim3 = await _dim3_market_preference(db, market, top_k)
@@ -282,7 +206,7 @@ async def recommend_schemes(
     all_ctrs = [i["avg_ctr"] for i in dim1 + dim2 + dim3 if i["avg_ctr"] > 0]
     max_ctr = max(all_ctrs) if all_ctrs else 0.05
 
-    # 融合：每个方案按来源维度加权
+    # 加权融合
     seen: dict[str, dict] = {}
     weight_map = {
         "same_category": WEIGHT_SAME_CATEGORY,
@@ -297,9 +221,7 @@ async def recommend_schemes(
     ]:
         for item in items:
             scheme_id = item["scheme_id"]
-            # 归一化 CTR 到 0-1
             norm_ctr = item["avg_ctr"] / max_ctr if max_ctr > 0 else 0
-            # 加权得分
             score = norm_ctr * weight_map[dim_name]
 
             if scheme_id not in seen:
@@ -316,23 +238,19 @@ async def recommend_schemes(
                     },
                 }
             else:
-                # 方案在多个维度都出现，累加得分
                 existing = seen[scheme_id]
                 existing["recommendation_score"] = round(
                     existing["recommendation_score"] + score, 4
                 )
                 existing["dimensions"].append(dim_name)
-                # 补充该维度的理由
                 extra_reason = _build_reason(dim_name, item, category, market)
                 existing["reason"] += f"；{extra_reason}"
 
-                # 补充指标
                 if dim_name == "cross_category":
                     existing["metrics"]["category_count"] = item.get("category_count", 0)
                 if dim_name == "market":
                     existing["metrics"]["avg_return_rate"] = item.get("avg_return_rate", 0)
 
-    # 按融合得分排序
     recommendations = sorted(
         seen.values(),
         key=lambda x: x["recommendation_score"],

@@ -1,5 +1,5 @@
 """
-pgvector 向量存储实现
+pgvector 向量存储实现 —— HNSW 索引 + 余弦距离检索。
 """
 
 from sqlalchemy import text
@@ -16,18 +16,8 @@ class PgvectorStore(VectorStore):
         self.session = session
 
     async def search(self, query_vector: list[float], top_k: int = 5) -> list[dict]:
-        """
-        pgvector HNSW 余弦距离检索
-
-        SQL: SELECT pe.product_id, pe.embedding <=> :vec AS distance,
-                    p.title, p.category
-             FROM product_embeddings pe
-             JOIN products p ON p.id = pe.product_id
-             ORDER BY distance ASC
-             LIMIT :top_k
-        """
         dim = settings.VECTOR_DIMENSION
-        # 安全地将向量转换为字符串（所有值经过 float() 验证，无 SQL 注入风险）
+        # 向量转字符串，所有值都经过 float() 校验，无 SQL 注入风险
         safe_vec = "[" + ",".join(repr(float(v)) for v in query_vector) + "]"
 
         sql = text(f"""

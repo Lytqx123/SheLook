@@ -19,7 +19,7 @@ import PageHeader from "@/components/PageHeader";
 const { Text, Paragraph } = Typography;
 const { Option } = Select;
 
-// ---- 常量 ----
+// 常量
 
 const DIM_LABELS: Record<string, string> = {
   sharpness: "清晰度",

@@ -1,7 +1,5 @@
 """
-FastAPI 中间件集合
-使用纯 ASGI 中间件替代 BaseHTTPMiddleware，避免
-"Response content longer than Content-Length" 错误。
+FastAPI 中间件集合，全用纯 ASGI 实现，避免 BaseHTTPMiddleware 的 Content-Length 坑。
 """
 
 import time
@@ -13,12 +11,12 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.core.logging import logger
 
-# 请求级别的 request_id（可在任意位置通过 contextvars 获取）
+# 请求级别的 request_id，全局可拿
 request_id_var: ContextVar[str] = ContextVar("request_id", default="-")
 
 
 class RequestIDMiddleware:
-    """统一请求 ID、审计 trace ID 与响应耗时头。"""
+    """给每个请求塞一个 request_id，响应头里也带回去"""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -28,7 +26,7 @@ class RequestIDMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # 从请求头提取或生成 request_id
+        # 优先用请求头里的，没有就自己生成
         req_headers = scope.get("headers", [])
         request_id = "-"
         for key, value in req_headers:
@@ -59,7 +57,7 @@ class RequestIDMiddleware:
 
 
 class RequestTimingMiddleware:
-    """请求耗时记录 + 结构化日志（纯 ASGI 实现）"""
+    """请求耗时 + 结构化日志"""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -104,7 +102,7 @@ class RequestTimingMiddleware:
 
 
 class PrometheusMetricsMiddleware:
-    """Prometheus 请求计数/延迟中间件（纯 ASGI 实现）"""
+    """Prometheus 请求计数 / 延迟"""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -140,8 +138,7 @@ class PrometheusMetricsMiddleware:
 
 
 def register_middleware(app: ASGIApp) -> None:
-    """注册全局中间件"""
     app.add_middleware(RequestIDMiddleware)
     app.add_middleware(RequestTimingMiddleware)
     app.add_middleware(PrometheusMetricsMiddleware)
-    # 注意：CORS 中间件由 main.py 单独配置，优先级最高
+    # CORS 在 main.py 单独配，得最先执行

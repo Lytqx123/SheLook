@@ -1,5 +1,4 @@
-# Grafana 数据源配置
-# 自动挂载到 /etc/grafana/provisioning/datasources/
+# Grafana 数据源 —— 挂到 /etc/grafana/provisioning/datasources/
 
 apiVersion: 1
 

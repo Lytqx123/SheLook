@@ -16,7 +16,6 @@ if TYPE_CHECKING:
 
 class ReviewStatus(StrEnum):
     """审核状态：自动通过 / 待人工 / 已驳回"""
-
     AUTO_APPROVED = "auto_approved"
     MANUAL_PENDING = "manual_pending"
     REJECTED = "rejected"
@@ -62,6 +61,7 @@ class GeneratedImage(Base):
     storage_bucket: Mapped[str | None] = mapped_column(String(128), nullable=True)
     storage_object_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     is_public: Mapped[bool] = mapped_column(nullable=False, server_default="false")
+    # task_id 记得改：切换文生图服务后格式可能变
     task_id: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True, index=True)
     generation_status: Mapped[str] = mapped_column(
         String(32), nullable=False, server_default="pending", index=True

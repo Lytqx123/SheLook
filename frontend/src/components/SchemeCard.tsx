@@ -9,7 +9,7 @@ interface SchemeCardProps {
   onSelect?: (scheme: SchemeOut) => void;
 }
 
-/** 风格标签中文映射 */
+// 风格标签中文名，有些是后端直接返回的英文
 const STYLE_LABELS: Record<string, string> = {
   natural_light: "自然光",
   studio_lighting: "棚拍",

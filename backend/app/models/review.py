@@ -15,7 +15,6 @@ if TYPE_CHECKING:
 
 class ReviewAction(StrEnum):
     """审核动作：通过 / 驳回"""
-
     APPROVED = "approved"
     REJECTED = "rejected"
 
@@ -34,6 +33,7 @@ class ReviewRecord(Base):
         Enum(ReviewAction, name="reviewaction", values_callable=lambda x: [e.value for e in x]),
         nullable=False,
     )
+    # 驳回原因，后面可能要改成多选
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     problem_dimensions: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())

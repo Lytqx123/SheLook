@@ -184,7 +184,7 @@ button, input, textarea, select { font: inherit; }
     var(--office-canvas);
 }
 
-/* 通用页面、卡片和数据密度 */
+/* 通用页面 & 卡片 */
 .office-page-header {
   display: flex;
   align-items: flex-start;
@@ -255,7 +255,7 @@ button, input, textarea, select { font: inherit; }
 .office-panel-note { margin: 0 0 18px; color: #728096; font-size: 13px; line-height: 1.7; }
 .office-result-block { margin-top: 16px; padding: 16px; background: #f8fafc; border: 1px solid #edf0f4; border-radius: 8px; }
 
-/* 图表：弱化框线，统一坐标、提示框和图例，避免“玩具化”渐变/阴影 */
+/* 图表——弱化框线，看着干净就行 */
 .office-chart { min-width: 0; }
 .office-chart .recharts-cartesian-grid-horizontal line { stroke: #e9eef5; stroke-dasharray: 0; }
 .office-chart .recharts-cartesian-grid-vertical line { stroke: transparent; }
@@ -274,7 +274,7 @@ button, input, textarea, select { font: inherit; }
 .office-donut__total strong { display: block; color: #1c2b43; font-size: 26px; line-height: 1.1; }
 .office-donut__total span { display: block; margin-top: 4px; color: #7a8699; font-size: 11px; }
 
-/* 预测、同步等具有输入和结果的面板采用稳定的工作流布局 */
+/* 工作流布局：预测/同步面板 */
 .office-selection-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 36px; padding: 10px 12px; background: #f8fafc; border: 1px solid #edf0f4; border-radius: 7px; }
 .office-selection-summary .ant-tag { margin: 0; }
 .office-table-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }

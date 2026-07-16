@@ -1,9 +1,4 @@
-"""IP 级 API 速率限制中间件 —— 基于 Redis 滑动窗口
-
-用法（在 main.py 中）：
-  from app.core.rate_limit import RateLimitMiddleware
-  app.add_middleware(RateLimitMiddleware, redis_url=settings.REDIS_URL)
-"""
+"""IP 级速率限制，Redis 滑动窗口实现"""
 
 import secrets
 import time
@@ -18,10 +13,7 @@ from app.core.logging import logger
 
 
 class RateLimitMiddleware:
-    """基于 Redis 滑动窗口的 IP 速率限制中间件
-
-    ASGI 原生中间件，不依赖 BaseHTTPMiddleware，避免与背景任务冲突。
-    """
+    """ASGI 原生限流中间件，不依赖 BaseHTTPMiddleware"""
 
     def __init__(self, app: ASGIApp, redis_url: str | None = None) -> None:
         self.app = app
@@ -47,16 +39,14 @@ class RateLimitMiddleware:
 
         request = Request(scope, receive)
 
-        # 跳过健康检查和 metrics 端点
+        # 健康检查不限制
         path = request.url.path
         if path in ("/api/health", "/api/health/ready", "/metrics"):
             await self.app(scope, receive, send)
             return
 
-        # 获取客户端 IP
         client_ip = self._get_client_ip(request)
 
-        # 滑动窗口限流
         is_limited, remaining = await self._check_rate_limit(client_ip)
 
         if is_limited:
@@ -91,7 +81,7 @@ class RateLimitMiddleware:
         await self.app(scope, receive, send_wrapper)
 
     def _get_client_ip(self, request: Request) -> str:
-        """获取真实客户端 IP"""
+        """拿真实 IP，注意代理穿透"""
         host = request.client.host if request.client else "unknown"
         if host in settings.TRUSTED_PROXY_HOSTS:
             forwarded = request.headers.get("X-Forwarded-For")
@@ -103,11 +93,7 @@ class RateLimitMiddleware:
         return host
 
     async def _check_rate_limit(self, client_ip: str) -> tuple[bool, int]:
-        """滑动窗口算法：检查是否超过限制
-
-        Returns:
-            (是否限流, 剩余配额)
-        """
+        """滑动窗口限流。返回 (是否触发限流, 剩余配额)"""
         try:
             redis = await self._get_redis()
             now = time.time()
@@ -115,6 +101,7 @@ class RateLimitMiddleware:
             key = f"rate_limit:{client_ip}"
 
             member = f"{now}:{secrets.token_hex(6)}"
+            # TODO: 这个 Lua 脚本后面可以考虑抽成常量或者放到配置里
             script = """
             redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, ARGV[1])
             local count = redis.call('ZCARD', KEYS[1])
@@ -137,5 +124,6 @@ class RateLimitMiddleware:
             )
             return bool(result[0]), max(0, int(result[1]))
         except Exception as e:
+            # Redis 挂了就放行，别把正常流量拦了
             logger.error("速率限制检查失败，放行请求", error=str(e))
             return False, self._max_requests

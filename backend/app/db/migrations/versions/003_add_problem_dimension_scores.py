@@ -10,7 +10,6 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-# revision identifiers, used by Alembic.
 revision: str = "003"
 down_revision: str | None = "002"
 branch_labels: str | Sequence[str] | None = None
@@ -18,7 +17,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # 新增 JSON 列：存储各维度违规次数，如 {"sharpness": 3, "lighting_uniformity": 1}
+    # 各维度违规次数，如 {"sharpness": 3, "lighting_uniformity": 1}
     op.add_column(
         "supplier_visual_scores",
         sa.Column("problem_dimension_scores", sa.JSON(), nullable=True),

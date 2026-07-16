@@ -1,9 +1,6 @@
 """
-效果归因服务 —— 剥离混杂因素，量化视觉方案的增量贡献
-
-支持：
-1. 整体 Lift + Z-test（calculate_lift / calculate_p_value / generate_attribution_report）
-2. 多维度下钻归因（dimension_breakdown）—— 按 market/category/date 分组重算 Lift
+效果归因服务 —— 剥离混杂因素，量化视觉方案的增量贡献。
+支持整体 Lift + Z-test，以及多维度下钻归因。
 """
 
 from typing import Any
@@ -14,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import logger
 
-# 支持的下钻维度
+# 下钻支持的维度
 SUPPORTED_DIMENSIONS = ("market", "category", "date")
 
 
@@ -22,16 +19,7 @@ def calculate_lift(
     variant_ctr: float,
     control_ctr: float,
 ) -> dict:
-    """
-    计算视觉方案的 Lift 值
-
-    Args:
-        variant_ctr: 实验组 CTR
-        control_ctr: 对照组 CTR
-
-    Returns:
-        {"lift_pct": 15.2, "direction": "positive"}
-    """
+    """计算 Lift 值，control_ctr <= 0 时返回 neutral。"""
     if control_ctr <= 0:
         return {"lift_pct": 0, "direction": "neutral", "error": "control_ctr is zero"}
 
@@ -49,9 +37,7 @@ def calculate_p_value(
     control_impressions: int,
     control_clicks: int,
 ) -> float:
-    """
-    简化的 A/B 检验 p-value 计算（Z-test for proportions）
-    """
+    """简化版 Z-test for proportions，计算双边 p-value。"""
     if variant_impressions <= 0 or control_impressions <= 0:
         return 1.0
 
@@ -69,7 +55,7 @@ def calculate_p_value(
 
     z = (p1 - p2) / se
 
-    # 双边检验 p-value（简化：使用正态近似）
+    # 双边检验 p-value
     from math import erfc, sqrt
 
     p_value = float(erfc(abs(z) / sqrt(2)))
@@ -82,17 +68,7 @@ def generate_attribution_report(
     variant_metrics: dict,
     control_metrics: dict,
 ) -> dict:
-    """
-    生成效果归因报告
-
-    Args:
-        image_id: 图片 ID
-        variant_metrics: 实验组指标 {"impressions": N, "clicks": N, "conversions": N, "returns": N}
-        control_metrics: 对照组指标
-
-    Returns:
-        归因报告
-    """
+    """生成归因报告，含 CTR/CVR Lift + p-value + 建议。"""
     variant_ctr = variant_metrics["clicks"] / max(variant_metrics["impressions"], 1)
     control_ctr = control_metrics["clicks"] / max(control_metrics["impressions"], 1)
     variant_cvr = variant_metrics.get("conversions", 0) / max(variant_metrics["clicks"], 1)
@@ -126,7 +102,7 @@ def generate_attribution_report(
     }
 
 
-# ============ 多维度下钻归因 ============
+# --- 多维度下钻归因
 
 
 async def _query_variant_metrics_by_dimension(
@@ -134,20 +110,13 @@ async def _query_variant_metrics_by_dimension(
     image_id: int,
     dimension: str,
 ) -> dict[str, dict[str, int]]:
-    """查单个变体图片按维度的聚合指标
-
-    Args:
-        db: 异步数据库会话
-        image_id: 变体图片 ID
-        dimension: 下钻维度 market/category/date
-
-    Returns:
-        {dim_value: {"impressions": N, "clicks": N}, ...}
+    """查单张变体图片按 market/category/date 聚合的指标。
+    
+    TODO: 跨品类聚合时 category 维度会退化，后续考虑加子品类字段。
     """
     from app.models import DailyMetric, GeneratedImage, ImageScheme, Product
 
     if dimension == "market":
-        # 按 market_variant 分组（同一张图只有一个 market，但保持聚合一致性）
         stmt = (
             select(
                 GeneratedImage.market_variant.label("dim_value"),
@@ -160,7 +129,6 @@ async def _query_variant_metrics_by_dimension(
             .group_by(GeneratedImage.market_variant)
         )
     elif dimension == "category":
-        # 关联到 Product.category
         stmt = (
             select(
                 Product.category.label("dim_value"),
@@ -175,7 +143,6 @@ async def _query_variant_metrics_by_dimension(
             .group_by(Product.category)
         )
     elif dimension == "date":
-        # 按日期分组
         stmt = (
             select(
                 DailyMetric.date.label("dim_value"),
@@ -204,37 +171,10 @@ async def dimension_breakdown(
     experiment_id: int,
     dimension: str,
 ) -> dict[str, Any]:
-    """多维度下钻归因分析
-
-    对指定实验按维度（market/category/date）切片，重算每个切片内
-    variant A vs variant B 的 Lift + Z-test p-value。
-
-    场景举例：
-    - dimension=date：看 Lift 随时间的变化趋势，判断效果是否稳定
-    - dimension=market：看不同市场中 A/B 谁更优（跨市场实验时有意义）
-    - dimension=category：单实验同品类时退化为单行，跨品类聚合时才有差异
-
-    Args:
-        db: 异步数据库会话
-        experiment_id: A/B 实验 ID
-        dimension: 下钻维度 market/category/date
-
-    Returns:
-        {
-            "experiment_id": int,
-            "dimension": str,
-            "breakdown": [
-                {
-                    "dimension_value": str,
-                    "variant_a": {"impressions": N, "clicks": N, "ctr": float},
-                    "variant_b": {"impressions": N, "clicks": N, "ctr": float},
-                    "lift_pct": float,
-                    "direction": "positive"|"negative"|"neutral",
-                    "p_value": float,
-                    "is_significant": bool,
-                }
-            ]
-        }
+    """多维度下钻归因分析。
+    
+    对实验按维度（market/category/date）切片，重算每个切片内 A vs B 的 Lift + p-value。
+    场景：看 Lift 随时间变化趋势 / 不同市场表现差异 / 跨品类聚合差异。
     """
     from app.models import ABExperiment
 
@@ -256,7 +196,6 @@ async def dimension_breakdown(
         db, exp.variant_b_image_id, dimension
     )
 
-    # 合并所有维度值
     all_dim_values = set(metrics_a.keys()) | set(metrics_b.keys())
 
     breakdown = []
@@ -264,14 +203,13 @@ async def dimension_breakdown(
         a = metrics_a.get(dim_value, {"impressions": 0, "clicks": 0})
         b = metrics_b.get(dim_value, {"impressions": 0, "clicks": 0})
 
-        # 跳过两边都没数据的维度值
+        # 两边都没数据的跳过
         if a["impressions"] == 0 and b["impressions"] == 0:
             continue
 
         ctr_a = a["clicks"] / max(a["impressions"], 1)
         ctr_b = b["clicks"] / max(b["impressions"], 1)
 
-        # A 相对 B 的 Lift（A=实验组，B=对照组）
         lift = calculate_lift(ctr_a, ctr_b)
         p_value = calculate_p_value(
             a["impressions"], a["clicks"],

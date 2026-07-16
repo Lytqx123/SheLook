@@ -18,10 +18,7 @@ def evaluate_image_quality(
     image_id: int,
     image_url: str,
 ) -> dict:
-    """L1→L2→L3 三级质检流水线
-
-    L1 基础质量（清晰度/分辨率/噪点）→ L2 构图与美观度 → L3 预测效果评估
-    """
+    """L1→L2→L3 三级质检流水线"""
     from sqlalchemy import select
 
     from app.db.session import async_session_factory
@@ -50,7 +47,7 @@ def evaluate_image_quality(
                         image_id=image_id,
                         overall=image.overall_score,
                     )
-                    # WebSocket 通知预留 —— 生产环境通过 Redis Pub/Sub 实现跨进程推送
+                    # WebSocket 通知预留，生产环境通过 Redis Pub/Sub 跨进程推送
                     return {
                         "status": "completed",
                         "overall_score": image.overall_score,

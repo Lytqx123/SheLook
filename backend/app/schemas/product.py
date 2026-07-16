@@ -17,7 +17,7 @@ class ProductCreate(BaseModel):
 
 
 class ProductUpdate(BaseModel):
-    """商品更新请求（所有字段可选，仅更新传入的字段）"""
+    """商品更新请求（所有字段可选）"""
     sku_code: str | None = Field(None, max_length=64, description="SKU 编码")
     title: str | None = Field(None, max_length=255, description="商品标题")
     category: str | None = Field(None, max_length=64, description="品类")

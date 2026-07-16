@@ -238,7 +238,7 @@ export default function ReviewContent() {
   );
 }
 
-// ====== 行级审核操作组件（每行独立 mutation，避免共享 loading） ======
+// 行级审核操作（每行独立 mutation）
 
 function ReviewRowActions({
   record,
@@ -311,7 +311,7 @@ function ReviewRowActions({
   );
 }
 
-// ====== 质检详情内容组件 ======
+// 质检详情弹窗内容
 
 interface QualityDetailContentProps {
   image: ReviewQueueItem;
@@ -712,7 +712,7 @@ function QualityDetailContent({
   );
 }
 
-// ====== AI 自动审核按钮（单图） ======
+// AI 自动审核按钮
 function AutoReviewButton({ imageId }: { imageId: number }) {
   const autoReview = useAutoReview();
   const { message } = App.useApp();

@@ -1,4 +1,4 @@
-"""A/B 实验 API —— 创建 / 列表 / 详情 / 停止 / 自动管理 / 归因下钻"""
+"""A/B 实验 API —— 创建 / 列表 / 停止 / 自动管理 / 归因下钻"""
 
 from datetime import datetime
 
@@ -41,7 +41,7 @@ def _format_experiment(exp: ABExperiment) -> ExperimentResponse:
     )
 
 
-# ============ 列表 / 创建（固定路径，无路径参数冲突风险）============
+# ---- 列表 / 创建 ----
 
 @router.get("", response_model=ExperimentListOut)
 async def list_experiments(
@@ -51,7 +51,7 @@ async def list_experiments(
     page_size: int = Query(20, ge=1, le=100),
     status: ExperimentStatus | None = None,
 ):
-    """分页查询实验列表"""
+    """分页查实验列表"""
     query = select(ABExperiment)
     count_query = select(func.count(ABExperiment.id))
 
@@ -127,17 +127,16 @@ async def create_experiment(
     return _format_experiment(experiment)
 
 
-# ============ 自动实验管理（固定路径，必须在 /{experiment_id} 之前）============
+# ---- 自动实验管理 ----
 
 @router.post("/auto/create", response_model=dict)
 async def trigger_auto_create(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    """手动触发自动创建 A/B 实验
+    """手动触发自动建实验 —— 扫描已审核+已预测的图片，找分数接近的两张自动建
 
-    扫描所有已审核通过 + 已预测的图片，按商品找预测分接近的两张自动建实验。
-    正常由 Celery Beat 每天 4:00 自动执行，此端点用于手动触发。
+    平时 Celery Beat 每天 4:00 跑，这个端点用来手动补跑。
     """
     from app.services.experiment_auto_service import auto_create_experiments
 
@@ -156,20 +155,20 @@ async def trigger_auto_create(
 async def get_auto_summary(
     db: AsyncSession = Depends(get_db),
 ):
-    """查询自动实验统计概览"""
+    """查自动实验统计概览"""
     from app.services.experiment_auto_service import get_auto_experiment_summary
 
     return await get_auto_experiment_summary(db)
 
 
-# ============ 单实验操作（路径参数 /{experiment_id}）============
+# ---- 单实验操作 ----
 
 @router.get("/{experiment_id}", response_model=ExperimentResponse)
 async def get_experiment(
     experiment_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """获取实验详情（含 CTR 对比、显著性、胜出方）"""
+    """查实验详情（CTR 对比、显著性、胜出方）"""
     result = await db.execute(select(ABExperiment).where(ABExperiment.id == experiment_id))
     experiment = result.scalar_one_or_none()
     if not experiment:
@@ -183,13 +182,12 @@ async def stop_experiment(
     experiment_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """停止实验"""
+    """停止实验，聚合 daily_metrics 计算 CTR + 显著性"""
     result = await db.execute(select(ABExperiment).where(ABExperiment.id == experiment_id))
     experiment = result.scalar_one_or_none()
     if not experiment:
         raise NotFoundError(detail=f"实验 #{experiment_id} 不存在")
 
-    # 从 daily_metrics 聚合实际 CTR
     from app.models import DailyMetric
 
     variant_metrics: dict[str, dict[str, float | int]] = {}
@@ -211,7 +209,7 @@ async def stop_experiment(
             "clicks": int(metrics.clicks),
         }
 
-    # 计算显著性
+    # 算显著性
     from app.services.reward_scorer import calculate_significance
     significance = calculate_significance(
         variant_metrics["A"],
@@ -224,7 +222,7 @@ async def stop_experiment(
         else experiment.variant_b_image_id if significance.get("winner") == "B"
         else None
     )
-    # 人工终止与达到预设样本/时间窗的自然完成是两个不同业务事件。
+    # 人工停止和自然完成是两个不同的事件，这里统一标 STOPPED
     experiment.status = ExperimentStatus.STOPPED
     experiment.end_date = datetime.utcnow()
 
@@ -242,13 +240,7 @@ async def get_experiment_breakdown(
     db: AsyncSession = Depends(get_db),
     dimension: str = "date",
 ):
-    """多维度下钻归因分析
-
-    按维度切片重算 A/B 实验的 Lift + 显著性：
-    - dimension=date：按日期看 Lift 趋势（默认）
-    - dimension=market：按市场看各市场表现差异
-    - dimension=category：按品类聚合（跨品类实验时有意义）
-    """
+    """多维度下钻归因 —— 按 date/market/category 切片看 Lift + 显著性"""
     from app.services.attribution import SUPPORTED_DIMENSIONS, dimension_breakdown
 
     if dimension not in SUPPORTED_DIMENSIONS:
@@ -277,11 +269,7 @@ async def trigger_traffic_update(
     experiment_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """手动触发单个实验的 UCB 流量分配更新
-
-    基于 daily_metrics 历史数据动态调整 variant A/B 的流量比例。
-    正常由 Celery Beat 每天 6:00 批量执行，此端点用于手动调整单个实验。
-    """
+    """手动触发 UCB 流量分配更新（正常 Celery Beat 每天 6:00 批量跑）"""
     from app.services.experiment_auto_service import update_traffic_allocation
 
     try:

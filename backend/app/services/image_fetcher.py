@@ -164,7 +164,7 @@ async def fetch_image(
     max_bytes: int | None = None,
     timeout: float | None = None,
 ) -> FetchedImage:
-    """异步下载图片；逐跳校验重定向并限制响应体大小。"""
+    """异步下载图片；逐跳校验重定向并限制大小。"""
     limit = max_bytes or settings.IMAGE_FETCH_MAX_BYTES
     if _configured_minio_location(url) is not None:
         return await asyncio.to_thread(_fetch_configured_minio_sync, url, limit)
@@ -241,7 +241,7 @@ def fetch_image_sync(
 
 
 def open_image_source(source: str | Path | bytes) -> Image.Image:
-    """统一解析 URL、本地路径或字节，并返回已脱离底层流的 RGB 图像。"""
+    """统一解析 URL、本地路径或字节，返回 RGB 图像。"""
     if isinstance(source, bytes):
         data = source
     elif isinstance(source, str) and source.startswith(("http://", "https://")):

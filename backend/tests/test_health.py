@@ -30,7 +30,7 @@ def test_readiness_check(client) -> None:
 
 
 def test_readiness_returns_503_when_dependency_fails(client) -> None:
-    """任一关键依赖失败时必须摘除流量并返回 503。"""
+    """任一关键依赖失败时返回 503。"""
     engine = mock.Mock()
     engine.connect = mock.AsyncMock(side_effect=RuntimeError("database unavailable"))
     with (
@@ -59,7 +59,7 @@ def test_auth_token_endpoint(client) -> None:
 
 
 def test_auth_me_endpoint(client) -> None:
-    """获取当前用户信息应返回 200（测试环境跳过认证）"""
+    """获取当前用户信息（测试环境跳过认证）"""
     response = client.get("/api/auth/me")
     assert response.status_code == 200
     data = response.json()

@@ -1,4 +1,4 @@
-"""效果预估 API —— CTR 预测 + 退货风险评估 + 历史记录 + 模型版本管理（v2）"""
+"""效果预估 API —— CTR 预测 / 退货风险 / 模型版本管理"""
 
 import asyncio
 
@@ -26,10 +26,9 @@ async def _execute_prediction(
     image: GeneratedImage,
     image_id: int,
 ) -> PredictionResponse:
-    """共享预测逻辑: 预测 → 归因 → 合规 → 持久化 → 返回
+    """共享预测逻辑，predict_image 和 predict_by_scheme 都走这里
 
-    供 predict_image（按图片 ID）和 predict_by_scheme（按方案 ID）复用。
-    调用方需确保 image 已预加载 scheme.product 关系。
+    调用方要确保 image 已预加载 scheme.product 关系。
     """
     from app.services.attribution import generate_attribution_report
     from app.services.compliance_checker import full_compliance_check
@@ -37,14 +36,13 @@ async def _execute_prediction(
 
     await resolve_image_url(image)
 
-    # 执行预测（含 CLIP 推理，通过 asyncio.to_thread 避免阻塞事件循环）
+    # 跑预测（CLIP 推理走 asyncio.to_thread 不阻塞事件循环）
     result = await asyncio.to_thread(predictor.predict, image)
     scores = result.get("scores", {})
 
-    # 退货风险归因分析（基于同品类历史基线数据）
+    # 退货风险归因（只在高风险时跑）
     attribution = None
     if scores.get("return_risk") and scores["return_risk"] > 0.3:
-        # 查询该图片所属品类的历史基线指标（非 AI 生成图的 30 天前数据）
         baseline_stmt = (
             select(
                 func.coalesce(func.sum(DailyMetric.impressions), 1000).label("total_impressions"),
@@ -82,7 +80,7 @@ async def _execute_prediction(
             control_metrics=control_metrics,
         )
 
-    # 合规校验（下载图片到临时文件，因为合规检查函数期望本地路径）
+    # 合规校验
     compliance = None
     if image.image_url:
         try:
@@ -97,7 +95,7 @@ async def _execute_prediction(
         except Exception as e:
             logger.warning("合规校验失败（非阻断）", error=str(e))
 
-    # 持久化预测结果
+    # 持久化
     risk_level = None
     if scores.get("return_risk"):
         risk = scores["return_risk"]
@@ -144,8 +142,8 @@ async def predict_image(
     db: AsyncSession = Depends(get_db),
     predictor: CTRPredictor = Depends(get_predictor),
 ):
-    """执行效果预估 —— CTR / 爆款概率 / 退货风险（按图片 ID）"""
-    # 验证图片存在（预加载 scheme 和 product 关系，避免 sync predictor 中 MissingGreenlet）
+    """按图片 ID 预测 CTR / 爆款概率 / 退货风险"""
+    # 查图片（预加载 scheme + product，避免 sync predictor 里 MissingGreenlet）
     img_result = await db.execute(
         select(GeneratedImage)
         .options(selectinload(GeneratedImage.scheme).selectinload(ImageScheme.product))
@@ -164,11 +162,7 @@ async def predict_by_scheme(
     db: AsyncSession = Depends(get_db),
     predictor: CTRPredictor = Depends(get_predictor),
 ):
-    """按方案预测 —— 自动选取该方案下质量分最高的图片进行效果预估
-
-    供预测决策面板批量预测使用：用户选择方案后，后端自动挑选该方案下
-    overall_score 最高的生成图片执行预测，无需前端手动指定 image_id。
-    """
+    """按方案预测 —— 自动取该方案下 overall_score 最高的图片来跑"""
     img_result = await db.execute(
         select(GeneratedImage)
         .options(selectinload(GeneratedImage.scheme).selectinload(ImageScheme.product))
@@ -188,7 +182,7 @@ async def get_prediction_history(
     image_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """查询某图片的预测历史记录（按时间倒序）"""
+    """查某图片的预测历史，按时间倒序"""
     result = await db.execute(
         select(PredictionRecord)
         .where(
@@ -220,13 +214,11 @@ async def get_prediction_history(
     }
 
 
-# ============================================================
-# 模型版本管理（v2 新增）
-# ============================================================
+# ---- 模型版本管理 ----
 
 @router.get("/model-versions", response_model=dict)
 async def list_model_versions():
-    """列出所有可用的预测模型版本"""
+    """列出可用的预测模型版本"""
     from app.services.predictor import CTRPredictor
 
     versions = CTRPredictor.list_versions()
@@ -241,13 +233,9 @@ async def list_model_versions():
 
 @router.post("/rollback", response_model=dict)
 async def rollback_model(body: ModelRollbackRequest):
-    """回滚预测模型到指定日期版本
-
-    操作会记录到审计日志。仅在管理员手动触发时使用。
-    """
+    """回滚预测模型到指定日期版本，管理员手动操作"""
     result = CTRPredictor.rollback(body.target_date)
 
-    # 写入审计日志
     try:
         from app.core.audit import audit_operation
         await audit_operation(

@@ -1,18 +1,13 @@
-"""Pydantic 请求/响应模型 —— OpenAPI 文档生成与类型安全
+"""Pydantic 请求/响应模型，统一 re-export。"""
 
-所有 API 端点的请求参数和响应结构按业务域拆分到子模块,本文件统一 re-export,
-保持 `from app.schemas import XXX` 的包级 API 向后兼容。
-"""
-
-# ---- 商品 ----
-# ---- 认证 ----
+# --- 认证
 from app.schemas.auth import (
     LoginRequest,
     TokenResponse,
     UserResponse,
 )
 
-# ---- 聚类分析 ----
+# --- 聚类分析
 from app.schemas.clustering import (
     ClusterInfo,
     ClusteringRequest,
@@ -20,14 +15,14 @@ from app.schemas.clustering import (
     TSNECoordinate,
 )
 
-# ---- A/B 实验 ----
+# --- A/B 实验
 from app.schemas.experiment import (
     ExperimentCreateRequest,
     ExperimentListOut,
     ExperimentResponse,
 )
 
-# ---- 公平性约束 ----
+# --- 公平性约束
 from app.schemas.fairness import (
     FairnessDistributionOut,
     FairnessReportOut,
@@ -35,7 +30,7 @@ from app.schemas.fairness import (
     SkinToneDistribution,
 )
 
-# ---- 图片生成 ----
+# --- 图片生成
 from app.schemas.generation import (
     GenerateRequest,
     GenerateResponse,
@@ -46,7 +41,7 @@ from app.schemas.generation import (
     QualityScores,
 )
 
-# ---- 数据指标 ----
+# --- 数据指标
 from app.schemas.metrics import (
     MetricsBatchItem,
     MetricsBatchRequest,
@@ -57,7 +52,7 @@ from app.schemas.metrics import (
     MetricsUpsertResult,
 )
 
-# ---- 效果预估 ----
+# --- 效果预估
 from app.schemas.prediction import (
     ModelRollbackRequest,
     ModelRollbackResponse,
@@ -74,13 +69,13 @@ from app.schemas.product import (
     SchemeOut,
 )
 
-# ---- 审核 ----
+# --- 审核
 from app.schemas.review import (
     ReviewRequest,
     ReviewResponse,
 )
 
-# ---- 视觉方案 ----
+# --- 视觉方案
 from app.schemas.scheme import (
     SchemeFusionRecommendOut,
     SchemeFusionRecommendRequest,
@@ -88,7 +83,7 @@ from app.schemas.scheme import (
     SchemeRecommendRequest,
 )
 
-# ---- 供应商分析 ----
+# --- 供应商分析
 from app.schemas.supplier import (
     BenchmarkInfo,
     DimensionScore,
@@ -99,19 +94,19 @@ from app.schemas.supplier import (
     SupplierReportResponse,
 )
 
-# ---- 图文匹配 ----
+# --- 图文匹配
 from app.schemas.text_match import (
     TextMatchDetails,
     TextMatchRequest,
     TextMatchResponse,
 )
 
-# ---- 视频生成 ----
+# --- 视频生成
 from app.schemas.video import (
     VideoGenerateRequest,
 )
 
-# ---- 九维审美启发式评分（兼容原类型名） ----
+# --- 九维审美启发式评分
 from app.schemas.vision_reward import (
     PairwiseComparison,
     VisionRewardRequest,

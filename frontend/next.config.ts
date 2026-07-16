@@ -3,7 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "standalone",
 
-  // recharts 3.x 与 Turbopack 的 ESM 互操作兼容
+  // recharts 3.x 跟 Turbopack 不太对付，必须 transpile
   transpilePackages: ["recharts"],
 
   images: {
@@ -21,7 +21,7 @@ const nextConfig: NextConfig = {
     ],
   },
 
-  // API 代理 → 后端容器（Docker 内用 backend:8000，本地开发用 localhost:8000）
+  // 代理到后端，Docker里用backend:8000，本地用localhost:8000
   async rewrites() {
     const backendUrl = process.env.BACKEND_URL || "http://backend:8000";
     return [

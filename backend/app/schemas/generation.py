@@ -39,8 +39,9 @@ class L3AestheticSchema(BaseModel):
     lighting_depth: float | None = None
 
 
+# QualityScores 这个是AI补的，跟前端约定不太一样，注意测试
 class QualityScores(BaseModel):
-    """质量评分（L1/L2/L3 嵌套结构，与数据库存储和前端期望对齐）"""
+    """质量评分（L1/L2/L3 嵌套结构）"""
     l1: L1ComplianceSchema | None = None
     l2: L2QualitySchema | None = None
     l3: L3AestheticSchema | None = None
@@ -50,7 +51,7 @@ class QualityScores(BaseModel):
 
 
 class GenerationStatusOut(BaseModel):
-    """生图任务状态响应（含质检分数/生成参数/C2PA，与前端期望对齐）"""
+    """生图任务状态响应（含质检分数/生成参数/C2PA）"""
     image_id: int
     task_id: str | None = None
     status: str

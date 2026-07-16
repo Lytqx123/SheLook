@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import React from "react";
 
@@ -8,10 +8,7 @@ interface PageHeaderProps {
   extra?: React.ReactNode;
 }
 
-/**
- * 统一页头组件 —— 极简、留白充足、企业级 B2B 风格
- * 替代各页面自行用 Card 包裹的标题栏
- */
+// 统一页面顶部，免得每个页面自己写一遍
 export default function PageHeader({ title, subtitle, extra }: PageHeaderProps) {
   return (
     <div className="office-page-header">

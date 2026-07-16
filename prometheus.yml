@@ -1,35 +1,25 @@
-# ============================================================
-# Prometheus 监控配置 —— SheLook 可观测性
+# Prometheus 采集配置 —— SheLook
 #
-# 采集目标:
-#   - Backend: FastAPI 应用指标（/metrics 端点，含业务 Gauge/Histogram）
+# 当前只采集 Backend 的 /metrics
+# 采集间隔 15s，本地保留 30d
 #
-# 可选扩展（需在 docker-compose.yml 中启用对应 exporter 服务）:
-#   - PostgreSQL: postgres-exporter:9187  → 系统指标 pg_stat_database_*
-#   - Redis:      redis-exporter:9121     → redis_memory_*
-#   - Node:       node-exporter:9100      → node_cpu_/node_memory_*
-#   启用方式：取消下方注释并在 docker-compose.yml 取消对应服务注释
-#
-# 采集间隔: 15s（各环境共享）
-# 数据保留: 30d（本地存储，仅监控用）
-# ============================================================
+# 可选扩展（需要先取消 docker-compose.yml 里对应 exporter 的注释）:
+#   postgres-exporter:9187
+#   redis-exporter:9121
+#   node-exporter:9100
 
 global:
   scrape_interval: 15s
   scrape_timeout: 10s
   evaluation_interval: 15s
 
-# 告警规则文件（后续扩展）
+# 告警规则（以后再加）
 rule_files:
   # - "alerts/*.yml"
 
 # 采集目标
 scrape_configs:
-  # ---- Backend (FastAPI) ----
-  # 暴露指标：
-  #   shelook_requests_total / shelook_request_latency_seconds / shelook_active_requests
-  #   shelook_quality_pass_rate / shelook_model_prediction_drift
-  #   shelook_generation_task_duration_seconds / shelook_celery_queue_length
+  # ---- Backend FastAPI ----
   - job_name: "shelook-backend"
     metrics_path: "/metrics"
     static_configs:
@@ -37,24 +27,21 @@ scrape_configs:
         labels:
           service: "shelook-api"
 
-  # ---- 可选：PostgreSQL Exporter ----
-  # 需在 docker-compose.yml 取消 postgres-exporter 服务注释
+  # ---- 可选: PostgreSQL ----
   # - job_name: "shelook-postgres"
   #   static_configs:
   #     - targets: ["postgres-exporter:9187"]
   #       labels:
   #         service: "shelook-database"
 
-  # ---- 可选：Redis Exporter ----
-  # 需在 docker-compose.yml 取消 redis-exporter 服务注释
+  # ---- 可选: Redis ----
   # - job_name: "shelook-redis"
   #   static_configs:
   #     - targets: ["redis-exporter:9121"]
   #       labels:
   #         service: "shelook-cache"
 
-  # ---- 可选：Node / Host 系统指标 ----
-  # 需在 docker-compose.yml 新增 node-exporter 服务
+  # ---- 可选: Node 系统指标 ----
   # - job_name: "shelook-node"
   #   static_configs:
   #     - targets: ["node-exporter:9100"]

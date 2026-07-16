@@ -1,13 +1,9 @@
-# ============================================================
-# SheLook Staging 环境覆盖配置
+# SheLook Staging 覆盖配置
+# 用法: docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d
 #
-# 使用: docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d
-#
-# 与 production 的差异:
-#   - 不限制容器资源（便于压测观察性能上限）
-#   - 暴露 backend 8000 / frontend 3000 / Flower 5555 端口便于调试
-#   - 暴露 Prometheus 9090 / Grafana 3001 端口便于监控
-# ============================================================
+# 和 production 的区别：
+#   不限制资源（方便压测看上限）
+#   暴露 backend/frontend/Flower/Prometheus/Grafana 端口便于调试
 
 services:
   backend:

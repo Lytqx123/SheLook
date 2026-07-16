@@ -1,21 +1,7 @@
-"""AI 视频生成服务 —— Kling AI + 三级降级
+"""AI 视频生成服务 —— Kling AI 优先，Runway 降级。
 
-2026 视频模型市场格局（2026-07）：
-  - Sora 2 已于 2026.03.24 关闭（月亏损 $8-12M）
-  - Kling AI 3.0 成为电商短视频首选：
-    - Native 4K 分辨率，最长 2 分钟
-    - $0.08-0.15/秒（API 直连或第三方平台）
-    - 中文文字渲染业界领先
-  - Runway Gen-4.5：电影级画质，但 $0.30-0.40/次
-  - Seedance 2.0：成本模型复杂，按分辨率×时长乘法
-
-本项目选择 Kling AI 3.0 作为首选（成本/质量/中文支持综合最佳）。
-
-三级降级：
-  Kling API → Runway API → 显式不可用
-
-使用方式：
-  from app.services.video_generator import generate_product_video
+首选 Kling AI 3.0（成本/中文/质量综合最优），失败后降级 Runway Gen-4.5，
+都不行时明确返回不可用，不伪造结果。
 """
 
 import asyncio
@@ -26,7 +12,7 @@ import httpx
 from app.config import settings
 from app.core.logging import logger
 
-# ---- Kling API 配置 ----
+# --- Kling API 配置
 KLING_API_BASE_DEFAULT = "https://api.klingai.com/v1"
 
 
@@ -35,11 +21,9 @@ def _get_kling_base_url() -> str:
 
 
 def _get_kling_headers() -> dict:
-    """生成 Kling API 请求头，自动选择认证模式
+    """生成 Kling API 请求头
 
-    优先级：
-    1. 快手版：KLING_API_KEY（单一 API Key，Bearer token）
-    2. 国际版：KLING_ACCESS_KEY + KLING_SECRET_KEY（JWT 签名）
+    优先级：KLING_API_KEY (快手版) > KLING_ACCESS_KEY + KLING_SECRET_KEY (国际版 JWT)
     """
     headers = {"Content-Type": "application/json"}
 
@@ -82,22 +66,7 @@ async def generate_product_video(
 ) -> dict:
     """生成电商商品展示短视频
 
-    Args:
-        image_url: 商品图片 URL（作为首帧参考）
-        prompt: 视频动作描述（中英文均可）
-        duration_seconds: 视频时长（5/10秒）
-        resolution: 分辨率（"720p" / "1080p" / "4K"）
-        style: 风格（"product_showcase" / "lifestyle" / "unboxing"）
-
-    Returns:
-        {
-            "video_url": str,
-            "status": "completed" | "failed" | "pending",
-            "model": str,
-            "provider": str,
-            "duration_ms": float,
-            "message": str (可选),
-        }
+    三级降级：Kling → Runway → 显式不可用。
     """
     start_time = time.time()
     norm_resolution = _normalize_resolution(resolution)
@@ -117,14 +86,12 @@ async def generate_product_video(
                 result["duration_ms"] = (time.time() - start_time) * 1000
                 logger.info("Kling 视频生成成功", duration=result["duration_ms"])
                 return result
-            # 超时（pending）—— 返回状态而非降级，避免浪费 Runway 配额
             if result.get("status") == "pending":
                 result["provider"] = "kling"
                 result["model"] = result.get("model", "kling-v3-master")
                 result["duration_ms"] = (time.time() - start_time) * 1000
                 result["message"] = "Kling 视频生成超时，任务可能仍在处理中，请稍后重试"
                 return result
-            # status == "failed" → 降级到 Runway
         except Exception as e:
             logger.warning("Kling 视频生成失败，尝试降级", error=str(e))
 
@@ -152,7 +119,6 @@ async def generate_product_video(
         except Exception as e:
             logger.warning("Runway 视频生成失败", error=str(e))
 
-    # 不伪造第三方结果：所有通道失败时明确返回不可用。
     logger.warning("所有视频通道失败，显式返回不可用")
     return {
         "video_url": "",
@@ -173,9 +139,7 @@ async def _generate_with_kling(
 ) -> dict:
     """通过 Kling AI API 生成视频（图生视频）
 
-    Kling API 流程：
-      1. POST /v1/videos/image2video 提交任务 → 获得 task_id
-      2. GET  /v1/videos/image2video/{task_id} 轮询状态 → 获得视频 URL
+    Kling 流程：POST 提交任务 → 轮询 GET status → 获取视频 URL。
     """
     headers = _get_kling_headers()
 
@@ -197,7 +161,6 @@ async def _generate_with_kling(
     }
 
     async with httpx.AsyncClient(timeout=60.0) as client:
-        # 提交任务
         resp = await client.post(
             f"{_get_kling_base_url()}/videos/image2video",
             headers=headers,
@@ -212,8 +175,8 @@ async def _generate_with_kling(
 
         task_id = data["data"]["task_id"]
 
-        # 轮询结果
-        for _ in range(30):  # 最多 5 分钟
+        # 轮询结果（最多 5 分钟）
+        for _ in range(30):
             await asyncio.sleep(10)
             status_resp = await client.get(
                 f"{_get_kling_base_url()}/videos/image2video/{task_id}",
@@ -248,7 +211,7 @@ async def _generate_with_runway(
 ) -> dict:
     """通过 Runway API 生成视频（图生视频）
 
-    Note: Runway Gen-4.5 最高支持 1080p，4K 请求自动降级为 1080p。
+    Runway Gen-4.5 最高支持 1080p，4K 请求自动降级。
     """
     runway_key = settings.RUNWAY_API_KEY
 
@@ -257,7 +220,6 @@ async def _generate_with_runway(
         "Content-Type": "application/json",
     }
 
-    # Runway Gen-4.5 最高 1080p，4K 自动降级
     runway_resolution = "1080p" if resolution in ("4K", "1080p") else "720p"
 
     payload = {
@@ -269,7 +231,6 @@ async def _generate_with_runway(
     }
 
     async with httpx.AsyncClient(timeout=120.0) as client:
-        # 提交任务
         resp = await client.post(
             "https://api.runwayml.com/v1/image_to_video",
             headers=headers,
@@ -282,8 +243,8 @@ async def _generate_with_runway(
         if not task_id:
             return {"video_url": "", "status": "failed", "model": "runway-gen4"}
 
-        # 轮询等待任务完成
-        for _ in range(60):  # 最多 10 分钟
+        # 轮询等待（最多 10 分钟）
+        for _ in range(60):
             await asyncio.sleep(10)
             status_resp = await client.get(
                 f"https://api.runwayml.com/v1/tasks/{task_id}",

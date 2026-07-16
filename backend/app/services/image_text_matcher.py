@@ -1,8 +1,5 @@
 """
-图片-文本匹配验证服务
-
-基于 CLIP 模型计算生成图片与商品描述之间的图文相似度，
-用于 L1 合规层验证图片是否与商品信息匹配。
+图片-文本匹配验证服务 —— 基于 CLIP 计算图文相似度。
 """
 
 import asyncio
@@ -30,10 +27,7 @@ async def check_image_text_match(
     product_description: str = "",
     tags: list[str] | None = None,
 ) -> dict:
-    """检查生成图片与商品文本描述的 CLIP 相似度（async 入口）
-
-    内部通过 asyncio.to_thread 调用同步 CLIP 推理，避免阻塞事件循环。
-    """
+    """检查生成图片与商品文本的 CLIP 相似度"""
     return await asyncio.to_thread(
         _compute_image_text_match,
         image_path,
@@ -49,43 +43,23 @@ def _compute_image_text_match(
     product_description: str = "",
     tags: list[str] | None = None,
 ) -> dict:
-    """同步核心逻辑：计算图文 CLIP 相似度
-
-    Args:
-        image_path: 图片文件路径
-        product_title: 商品标题
-        product_description: 商品描述（可选）
-        tags: 商品标签列表（可选）
-
-    Returns:
-        {
-            "match": bool,
-            "similarity_score": float,
-            "threshold": float,
-            "product_title": str,
-            "details": {
-                "title_similarity": float,
-                "description_similarity": float | None,
-                "tag_similarities": dict[str, float] | None,
-            }
-        }
-    """
+    """同步核心：计算图文 CLIP 相似度，加权融合标题/描述/标签"""
     threshold = _get_threshold()
 
     # 编码图片（一次，复用）
     image_vec = encode_image(image_path)
 
-    # 1. 标题相似度
+    # 标题相似度
     title_vec = encode_text(product_title)
     title_similarity = compute_similarity(image_vec, title_vec)
 
-    # 2. 描述相似度
+    # 描述相似度
     description_similarity: float | None = None
     if product_description:
         desc_vec = encode_text(product_description)
         description_similarity = compute_similarity(image_vec, desc_vec)
 
-    # 3. 标签相似度
+    # 标签相似度
     tag_similarities: dict[str, float] | None = None
     if tags:
         tag_similarities = {}
@@ -93,7 +67,7 @@ def _compute_image_text_match(
             tag_vec = encode_text(tag)
             tag_similarities[tag] = compute_similarity(image_vec, tag_vec)
 
-    # 4. 加权综合分
+    # 加权综合分
     has_desc = description_similarity is not None
     has_tags = tag_similarities is not None and len(tag_similarities) > 0
 
@@ -137,10 +111,7 @@ def check_image_text_match_sync(
     product_description: str = "",
     tags: list[str] | None = None,
 ) -> dict:
-    """同步包装器，供 Celery 任务直接调用
-
-    Args 同 check_image_text_match。
-    """
+    """同步包装器，供 Celery 任务直接调用"""
     return _compute_image_text_match(
         image_path=image_path,
         product_title=product_title,

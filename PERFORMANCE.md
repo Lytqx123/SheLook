@@ -1,24 +1,26 @@
-# SheLook 性能测试说明
+# SheLook 性能测试
 
-本文只描述当前项目的压测方法、采集口径和结果记录要求，不提供未经执行验证的 QPS 或延迟结论。
+这边只记录压测方法、采集口径和结果记录要求。QPS 和延迟数据需要在目标环境跑完再填。
+
+> TODO: 等 staging 环境跑完一轮正式压测，把基线数据贴过来
 
 ## 当前状态
 
-- 仓库提供 Locust 场景：`scripts/locustfile.py`。
-- 默认场景只执行已认证的只读请求，不创建或修改业务数据。
-- 预测和生图场景默认关闭，只有显式允许写入并提供有效资源 ID 后才启用。
-- 当前仓库没有可作为发布承诺的正式基准结果；实际容量需要在目标硬件、目标模型和目标外部供应商配置下重新测试。
+- 仓库里有 Locust 场景：`scripts/locustfile.py`
+- 默认只跑只读请求，不会创建或修改数据
+- 预测和生图默认关闭，需要显式开 `SHELOOK_ENABLE_MUTATIONS`
+- 目前没有可以作为发布承诺的正式基准结果——容量得在目标硬件和配置下自己测
 
 ## 准备环境
 
-启动完整服务并确认依赖健康：
+先确保所有服务健康：
 
 ```bash
 docker compose up -d
 docker compose ps
 ```
 
-安装后端性能测试依赖：
+装性能测试依赖：
 
 ```bash
 cd backend
@@ -26,27 +28,27 @@ uv sync --extra perf
 cd ..
 ```
 
-开发环境可以让 Locust 自动调用 `/api/auth/token` 获取本地 token。生产或 OIDC 环境必须通过 `SHELOOK_TOKEN` 提供有效 token。
+开发环境 Locust 可以自动调 `/api/auth/token` 拿 token。生产/OIDC 必须通过 `SHELOOK_TOKEN` 传入 token。
 
-PowerShell 示例：
+PowerShell：
 
 ```powershell
-$env:SHELOOK_TOKEN = '<有效 JWT>'
+$env:SHELOOK_TOKEN = '<JWT>'
 backend\.venv\Scripts\locust.exe -f scripts\locustfile.py --host http://127.0.0.1:8000
 ```
 
-Bash 示例：
+Bash：
 
 ```bash
-export SHELOOK_TOKEN='<有效 JWT>'
+export SHELOOK_TOKEN='<JWT>'
 backend/.venv/bin/locust -f scripts/locustfile.py --host http://127.0.0.1:8000
 ```
 
-打开 Locust 页面后，按测试计划设置并发用户数、增长速率和持续时间。
+打开 Locust 页面后按计划设并发、增长速率和持续时间。
 
-## 场景说明
+## 场景
 
-### 默认只读场景
+### 默认只读
 
 `ReadOnlyUser` 覆盖：
 
@@ -59,11 +61,11 @@ backend/.venv/bin/locust -f scripts/locustfile.py --host http://127.0.0.1:8000
 - `/api/audit/logs`
 - `/api/prediction/model-versions`
 
-`/api/health/ready` 会同步检查数据库、Redis 和 MinIO，因此不放入高频请求权重；应在压测前后各调用一次，而不是把它当作普通业务接口压测。
+`/api/health/ready` 会同步检查数据库、Redis 和 MinIO，别当普通接口压测——压测前后各调一次就行。
 
-### 可选写入场景
+### 可选写入
 
-只有在隔离的测试数据环境中才启用：
+只在隔离测试环境启用：
 
 ```powershell
 $env:SHELOOK_ENABLE_MUTATIONS = 'true'
@@ -71,51 +73,49 @@ $env:SHELOOK_IMAGE_ID = '123'
 $env:SHELOOK_SCHEME_ID = '456'
 ```
 
-- 设置 `SHELOOK_IMAGE_ID` 后启用预测场景。
-- 设置 `SHELOOK_SCHEME_ID` 后启用生图提交场景。
-- `429`、`503`、`504` 等容量或依赖错误统一计为失败，不会被伪装成成功请求。
+- 设了 `SHELOOK_IMAGE_ID` → 启用预测
+- 设了 `SHELOOK_SCHEME_ID` → 启用生图提交
+- 429/503/504 统一记失败，不会伪装成成功
 
-## 建议测试阶段
+## 建议测试顺序
 
-1. 冒烟：1～2 个用户运行 2 分钟，确认无认证、路由或数据错误。
-2. 基线：固定并发运行至少 10 分钟，记录稳定区间。
-3. 阶梯：逐级增加并发，每级保持 5～10 分钟，找到延迟和错误率开始明显恶化的位置。
-4. 稳定性：使用目标并发持续运行 1～4 小时，观察内存、连接池、Celery 队列和外部供应商错误。
-5. 恢复：停止流量后确认队列归零、连接数恢复且服务继续健康。
+1. **冒烟**：1~2 用户跑 2 分钟，确认没认证/路由/数据错误
+2. **基线**：固定并发跑至少 10 分钟，记稳定区间
+3. **阶梯**：逐级加并发，每级 5~10 分钟，找延迟和错误率开始恶化的点
+4. **稳定性**：目标并发达 1~4 小时，观察内存、连接池、Celery 队列和外部错误
+5. **恢复**：停流量后确认队列归零、连接数恢复、服务健康
 
-不要在包含真实生产数据的环境启用写入场景，也不要在未确认供应商计费规则时压测图片或视频生成接口。
+不要在真实生产数据环境开写入场景，也不要在没确认供应商计费规则的时候压生图或视频接口。
 
 ## 监控口径
 
-Locust 至少记录：
+Locust 记录：
+- 请求数、RPS、失败率
+- P50/P90/P95/P99 和最大延迟
+- 按接口分的状态码和错误原因
 
-- 请求数、RPS、失败率；
-- P50、P90、P95、P99 和最大响应时间；
-- 按接口区分的状态码与错误原因。
+Prometheus/Grafana 同期看：
+- `shelook_requests_total`
+- `shelook_request_latency_seconds`
+- `shelook_active_requests`
+- `shelook_celery_queue_length`
+- `shelook_generation_task_duration_seconds`
+- 容器 CPU、内存、重启次数、数据库连接池状态
 
-Prometheus/Grafana 同期记录：
-
-- `shelook_requests_total`；
-- `shelook_request_latency_seconds`；
-- `shelook_active_requests`；
-- `shelook_celery_queue_length`；
-- `shelook_generation_task_duration_seconds`；
-- 容器 CPU、内存、重启次数和数据库连接池状态。
-
-外部模型或供应商接口还要单独记录调用次数、限流、超时、失败率和费用。不能把 mock 模式的成绩当作真实供应商容量。
+外部模型/供应商接口单独记录调用次数、限流、超时、失败率和费用。mock 模式的数据不能当真实容量。
 
 ## 结果记录模板
 
-每次正式测试至少保存以下信息：
+每次正式测完至少记这些：
 
 | 项目 | 内容 |
 |---|---|
 | 日期与版本 | Git commit、镜像版本、配置版本 |
-| 环境 | CPU、内存、磁盘、操作系统、Docker 版本 |
-| 服务配置 | Uvicorn/Celery 并发、连接池、限流、模型与供应商 |
+| 环境 | CPU、内存、磁盘、OS、Docker 版本 |
+| 服务配置 | Uvicorn/Celery 并发、连接池、限流、模型 |
 | 数据规模 | 商品、图片、实验、指标记录数量 |
 | Locust 参数 | 用户数、增长速率、持续时间、启用场景 |
 | 结果 | RPS、P50/P95/P99、错误率、资源峰值 |
-| 异常 | 失败状态码、日志摘要、队列积压和恢复时间 |
+| 异常 | 失败码、日志关键信息、队列积压和恢复时间 |
 
-验收阈值应由实际业务 SLO、硬件预算和供应商额度确定，并在测试前写入测试记录；不要在没有环境和样本说明的情况下把单次结果写成项目通用能力。
+验收阈值以实际业务 SLO、硬件预算和供应商额度为准。别在没有环境说明的情况下把单次结果写成"项目通用能力"。

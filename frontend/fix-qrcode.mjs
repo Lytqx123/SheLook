@@ -1,7 +1,6 @@
-// Fix @rc-component/qrcode@2.0.0 ESM publishing defect
-// The es/hooks/useQRCode.js file is missing, causing React error #130.
-// This script inlines the useQRCode hook into QRCodeCanvas.js and QRCodeSVG.js,
-// removing the dependency on the missing ./hooks/useQRCode module.
+// Fix @rc-component/qrcode@2.0.0 ESM bug
+// es/hooks/useQRCode.js 丢了，导致 React error #130
+// 这个脚本把 useQRCode 内联到 QRCodeCanvas.js / QRCodeSVG.js 里
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -34,7 +33,7 @@ function patchFile(filename, originalUtilsImport, newUtilsImport) {
     return;
   }
   let content = fs.readFileSync(filePath, 'utf8');
-  // Skip if already patched
+  // 已经修过就跳过
   if (!content.includes('from "./hooks/useQRCode"')) {
     console.log(`Skip: ${filename} already patched or no hook import`);
     return;

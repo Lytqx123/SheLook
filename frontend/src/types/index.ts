@@ -1,8 +1,6 @@
-/**
- * SheLook TypeScript 类型定义 —— 与后端 Pydantic Schema 完全对齐
- */
+// TypeScript类型定义，跟后端Pydantic Schema对齐的
 
-// ========== 商品 ==========
+// 商品
 
 export interface ProductCreate {
   sku_code: string;
@@ -46,7 +44,7 @@ export interface ProductList {
   page_size: number;
 }
 
-// ========== 视觉方案 ==========
+// 视觉方案
 
 export interface SchemeRecommendRequest {
   image_url: string;
@@ -58,7 +56,7 @@ export interface SchemeRecommendOut {
   source: string;
 }
 
-// ========== 三维度融合推荐 ==========
+// 三维度融合推荐
 
 export interface SchemeFusionRecommendRequest {
   category: string;
@@ -88,7 +86,7 @@ export interface SchemeFusionRecommendOut {
   source: string;
 }
 
-// ========== 质检分数结构 ==========
+// 质检分数结构
 
 export interface L1CheckItem {
   dimension: string;
@@ -130,7 +128,7 @@ export interface QualityScores {
   l3?: L3Aesthetic;
 }
 
-// ========== 图片生成 ==========
+// 图片生成
 
 export interface GenerateRequest {
   scheme_id: number;
@@ -157,7 +155,7 @@ export interface GenerationStatus {
   c2pa_manifest?: string;
 }
 
-// ========== 审核 ==========
+// 审核
 
 export interface ReviewRequest {
   action: "approved" | "rejected";
@@ -196,7 +194,7 @@ export interface ReviewQueue {
   page_size: number;
 }
 
-// ========== AI 自动审核 ==========
+// AI 自动审核
 
 export interface AutoReviewResult {
   overall_score: number;
@@ -208,7 +206,7 @@ export interface AutoReviewResult {
   model: string;
 }
 
-// ========== 效果预估 ==========
+// 效果预估
 
 export interface PredictionRequest {
   image_id: number;
@@ -238,7 +236,7 @@ export interface PredictionHistoryItem {
   predicted_at?: string;
 }
 
-// ========== A/B 实验 ==========
+// A/B 实验
 
 export interface ExperimentCreateRequest {
   product_id: number;
@@ -309,7 +307,7 @@ export interface TrafficUpdateResult {
   method: string;
 }
 
-// ========== 数据飞轮 ==========
+// 数据飞轮
 
 export interface FlywheelSyncResponse {
   status: string;
@@ -335,7 +333,7 @@ export interface FlywheelRetrainResponse {
   message?: string;
 }
 
-// ========== 看板 ==========
+// 看板
 
 export interface DashboardSummary {
   total_generated: number;
@@ -369,7 +367,7 @@ export interface StyleInsightData {
   total_tags: number;
 }
 
-// ========== 审计日志 ==========
+// 审计日志
 
 export interface AuditLogItem {
   id: number;
@@ -406,7 +404,7 @@ export interface AuditTraceResponse {
   items: AuditTraceItem[];
 }
 
-// ========== 视频生成 ==========
+// 视频生成
 
 export interface VideoGenerateParams {
   image_url?: string;
@@ -441,7 +439,7 @@ export interface VideoProvidersResponse {
   providers: VideoProvider[];
 }
 
-// ========== 公平性分析 ==========
+// 公平性分析
 
 export interface SkinToneItem {
   label: string;
@@ -470,7 +468,7 @@ export interface SchemeFairnessItem {
   is_biased: boolean;
 }
 
-// ========== 聚类分析 ==========
+// 聚类分析
 
 export type ClusteringAlgorithm = "kmeans" | "hdbscan";
 
@@ -506,7 +504,7 @@ export interface ClusteringRunResponse {
   tsne_coordinates: TSNECoordinate[];
 }
 
-// ========== 健康检查 ==========
+// 健康检查
 
 export interface HealthCheck {
   status: string;
@@ -520,7 +518,7 @@ export interface ReadinessCheck {
   checks: Record<string, string>;
 }
 
-// ====== 供应商分析报告 ======
+// 供应商分析报告
 export interface DimensionScore {
   name: string;
   display_name: string;
@@ -571,7 +569,7 @@ export interface SupplierReportHistoryItem {
   analyzed_at: string;
 }
 
-// ========== 认证 ==========
+// 认证
 
 export interface LoginRequest {
   user_id: string;
@@ -602,7 +600,7 @@ export interface UserResponse {
   role: string;
 }
 
-// ========== 以图搜图 ==========
+// 以图搜图
 
 export interface ImageSearchScheme {
   id: number;
@@ -630,7 +628,7 @@ export interface ImageSearchResponse {
   total: number;
 }
 
-// ========== 图文匹配验证 ==========
+// 图文匹配验证
 
 export interface TextMatchRequest {
   image_path: string;
@@ -653,7 +651,7 @@ export interface TextMatchResponse {
   details: TextMatchDetails;
 }
 
-// ========== 九维审美启发式评估（兼容原类型名） ==========
+// 九维审美启发式评估
 
 export interface VisionRewardRequest {
   image_path: string;
@@ -676,7 +674,7 @@ export interface VisionRewardResponse {
   model_version: string;
 }
 
-// ========== 数据指标 ==========
+// 数据指标
 
 export interface MetricsBatchItem {
   image_id: number;
@@ -727,7 +725,7 @@ export interface MetricsSyncResponse {
   message?: string;
 }
 
-// ========== 预测模型版本管理 ==========
+// 预测模型版本管理
 
 export interface ModelVersionInfo {
   version: string;
@@ -750,7 +748,7 @@ export interface ModelRollbackResponse {
   target_version?: string;
 }
 
-// ========== 审计日志详情 ==========
+// 审计日志详情
 
 export interface AuditLogDetail {
   id: number;

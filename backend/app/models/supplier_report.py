@@ -9,7 +9,7 @@ from app.db.base import Base
 
 
 class SupplierAnalysisReport(Base):
-    """供应商分析报告快照，保证重启和多 worker 场景下可追溯。"""
+    """供应商分析报告快照，重启和多 worker 场景下可追溯。"""
 
     __tablename__ = "supplier_analysis_reports"
 
@@ -17,6 +17,7 @@ class SupplierAnalysisReport(Base):
     report_id: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
     supplier_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     report_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    # AI补的，JSON字段后来觉得应该拆开存，先这样
     analyzed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
     )

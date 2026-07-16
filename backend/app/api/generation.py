@@ -1,6 +1,6 @@
-"""图片生成 API —— Replicate SD 生图 + 质量评估 + 合规校验 + 审计
+"""图片生成 API —— Replicate SD 生图 + 质量评估 + 合规 + 审计
 
-WebSocket 通知已升级为 Redis Pub/Sub，支持多 worker 横向扩展。
+WebSocket 通知走的 Redis Pub/Sub，方便多 worker 扩容。
 """
 
 import asyncio
@@ -43,10 +43,7 @@ async def generate_images(
     body: GenerateRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """提交生图任务（异步，提交后由 Celery 处理）
-
-    返回 task_id 用于 WebSocket 或轮询进度。
-    """
+    """提交生图任务（异步，丢 Celery 就跑），返回 task_id 给前端轮询"""
     # 验证方案存在
     scheme_result = await db.execute(
         select(ImageScheme).where(ImageScheme.id == body.scheme_id)
@@ -62,10 +59,10 @@ async def generate_images(
 
     task_id = str(uuid.uuid4())
 
-    # 创建生成记录（初始状态）
+    # 创建生成记录（先占位，URL 后续填充）
     image = GeneratedImage(
         scheme_id=body.scheme_id,
-        image_url="",  # 生成后填充
+        image_url="",
         task_id=task_id,
         generation_status="pending",
         market_variant=body.market_variant,
@@ -78,10 +75,10 @@ async def generate_images(
     await db.flush()
     await db.refresh(image)
 
-    # 必须先提交生成记录，Celery worker 才不会在事务提交前读取到“不存在”。
+    # 必须先 commit，否则 Celery worker 读到不存在
     await db.commit()
 
-    # 提交 Celery 任务（传递 request_id 用于全链路追踪）
+    # 丢 Celery 任务
     try:
         from app.tasks.generation_task import generate_single_image
         generate_single_image.apply_async(
@@ -121,7 +118,7 @@ async def get_generation_status(
     image_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """查询生成任务进度"""
+    """轮询生图进度"""
     result = await db.execute(
         select(GeneratedImage).where(GeneratedImage.id == image_id)
     )
@@ -148,25 +145,17 @@ async def get_generation_status(
 
 @router.websocket("/ws/{image_id}")
 async def generation_ws(websocket: WebSocket, image_id: int):
-    """WebSocket 推送生成进度（基于 Redis Pub/Sub）
-
-    架构：
-      - 客户端通过 WebSocket 连接此端点
-      - Celery 任务完成后通过 Redis Pub/Sub 发布消息
-      - 此端点订阅对应 channel，转发到客户端
-      - 若 Redis 不可用，降级为轮询模式
-    """
+    """WebSocket 推送生图进度（Redis Pub/Sub，挂了降级轮询）"""
     await websocket.accept()
 
     from app.services.pubsub import pubsub
 
     async def on_message(data: dict[str, Any]) -> None:
-        """收到 Redis Pub/Sub 消息，转发给客户端"""
         with suppress(Exception):
             await websocket.send_json(data)
 
     try:
-        # 尝试 Redis Pub/Sub 订阅
+        # 优先走 Redis Pub/Sub
         if pubsub is not None:
             try:
                 await pubsub.subscribe(image_id, callback=on_message, timeout=300.0)
@@ -178,9 +167,9 @@ async def generation_ws(websocket: WebSocket, image_id: int):
                     error=str(e),
                 )
 
-        # 降级：轮询模式（兼容 Redis 不可用场景）
+        # 降级：轮询，最多等 120 秒
         from app.db.session import async_session_factory
-        for _ in range(60):  # 最多等待 60 轮 × 2秒 = 120秒
+        for _ in range(60):
             await asyncio.sleep(2)
             async with async_session_factory() as db:
                 result = await db.execute(
@@ -210,11 +199,7 @@ async def generation_ws(websocket: WebSocket, image_id: int):
 async def check_image_text_match(
     body: TextMatchRequest,
 ):
-    """图片-文本匹配验证
-
-    基于 CLIP 模型计算生成图片与商品标题/描述/标签之间的相似度，
-    验证图片内容是否与商品信息一致。
-    """
+    """图片-文本匹配校验（CLIP），看看生图跟商品描述对得上不"""
     from app.services.image_text_matcher import check_image_text_match as _check
 
     result = await _check(
@@ -230,12 +215,7 @@ async def check_image_text_match(
 async def evaluate_aesthetic(
     body: VisionRewardRequest,
 ):
-    """参考 VisionReward 维度设计的审美启发式评估。
-
-    对生成图片按 9 个美学维度进行评估，返回综合评分、
-    逐维度评分和两两对比结果。当前采用启发式规则 + CLIP
-    Zero-shot 组合方案（model_version: heuristic-v1）。
-    """
+    """审美评估 —— 参考 VisionReward 维度，目前用启发式规则 + CLIP zero-shot"""
     from app.services.vision_reward import evaluate_vision_reward
 
     result = await evaluate_vision_reward(
@@ -247,7 +227,7 @@ async def evaluate_aesthetic(
 
 @router.get("/platforms")
 async def list_export_platforms():
-    """列出所有支持的平台导出规格"""
+    """列出支持的平台导出规格"""
     from app.services.image_export_service import get_platform_summary
 
     return {"platforms": get_platform_summary()}
@@ -259,14 +239,10 @@ async def export_image(
     platform: str = Query(..., description="目标平台: amazon/tmall/tiktok_shop/tiktok_square/shopify"),
     db: AsyncSession = Depends(get_db),
 ):
-    """将指定图片导出为目标平台格式（自动裁切/补白/加 AI 标注）
-
-    支持 Amazon / 天猫 / TikTok Shop / Shopify 四大平台，
-    自动适配尺寸、背景色和 AI 内容标注要求。
-    """
+    """图片导出为各平台格式（自动裁切/补白/加AI标注）"""
     from app.services.image_export_service import export_for_platform
 
-    # 1) 查询图片记录
+    # 查图片
     result = await db.execute(
         select(GeneratedImage).where(GeneratedImage.id == image_id)
     )
@@ -277,7 +253,7 @@ async def export_image(
     if not image.image_url:
         raise HTTPException(status_code=400, detail="图片尚未生成完成，无法导出")
 
-    # 2) 下载图片
+    # 下载图片
     from app.services.image_fetcher import fetch_image
     from app.services.storage_service import resolve_image_url
     try:
@@ -285,7 +261,7 @@ async def export_image(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"图片下载失败: {e}") from e
 
-    # 3) 平台适配处理
+    # 平台适配
     try:
         processed = await export_for_platform(
             image_data=image_data,
@@ -298,7 +274,6 @@ async def export_image(
 
     logger.info("图片已导出", image_id=image_id, platform=platform)
 
-    # 4) 返回处理后的图片
     return Response(
         content=processed,
         media_type="image/jpeg",

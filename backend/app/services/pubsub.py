@@ -1,14 +1,8 @@
-"""Redis Pub/Sub 服务 —— WebSocket 消息广播
-
-替代 generation.py 中的内存字典 _ws_connections，
-支持多 worker 横向扩展下的 WebSocket 消息推送。
+"""Redis Pub/Sub 服务 —— 多 Worker WebSocket 消息广播。
 
 架构：
-  Celery Task (generation_task.py)
-    → Redis PUBLISH channel="generation:{image_id}"
-  FastAPI WebSocket endpoint (generation.py)
-    → Redis SUBSCRIBE channel="generation:{image_id}"
-    → 转发到客户端 WebSocket
+  Celery Task → Redis PUBLISH channel="generation:{image_id}"
+  FastAPI WS  → Redis SUBSCRIBE → 转发到客户端
 """
 
 import asyncio
@@ -28,12 +22,8 @@ class RedisPubSub:
     用法：
         pubsub = RedisPubSub()
         await pubsub.connect()
-
-        # 发布端（Celery task）
-        await pubsub.publish(image_id, {"status": "completed", "image_url": "..."})
-
-        # 订阅端（WebSocket endpoint）
-        await pubsub.subscribe(image_id, callback=send_to_client)
+        # 发布端：await pubsub.publish(image_id, {"status": "completed"})
+        # 订阅端：await pubsub.subscribe(image_id, callback=send_to_client)
     """
 
     def __init__(self):
@@ -69,11 +59,7 @@ class RedisPubSub:
         return f"generation:{image_id}"
 
     async def publish(self, image_id: int, data: dict[str, Any]) -> int:
-        """发布消息到指定图片的 channel
-
-        Returns:
-            收到消息的订阅者数量
-        """
+        """发布消息到指定图片的 channel，返回订阅者数量"""
         if self._pub_client is None:
             await self.connect()
 
@@ -94,13 +80,7 @@ class RedisPubSub:
         callback: Callable[[dict[str, Any]], Awaitable[None]],
         timeout: float = 300.0,
     ) -> None:
-        """订阅指定图片的消息 channel
-
-        Args:
-            image_id: 图片 ID
-            callback: 异步回调函数 callback(data: dict)
-            timeout: 订阅超时（秒），超时后自动取消
-        """
+        """订阅指定图片的消息 channel，收到消息或超时后自动取消。"""
         if self._sub_client is None:
             await self.connect()
 
@@ -148,9 +128,6 @@ async def get_pubsub() -> RedisPubSub:
 
 
 async def notify_generation_completed(image_id: int, data: dict[str, Any]) -> int:
-    """通知前端某张图片生成完成
-
-    由 Celery 任务在生成完成后调用。
-    """
+    """通知前端某张图片生成完成（Celery 任务调用）"""
     ps = await get_pubsub()
     return await ps.publish(image_id, data)

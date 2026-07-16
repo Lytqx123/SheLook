@@ -1,16 +1,6 @@
-"""AI 自动审核服务 —— 基于 Gemini Flash 多模态大模型
-
-2026 最新研究（SIGIR 2025）：
-  MLLMs（Gemini / GPT-4o / Claude）在电商图片质量评估中
-  与人工评审的一致性可达 0.85+ Spearman 相关性。
-
-本服务对 L2（视觉效果）和 L3（美学）评分进行 LLM 增强，
-输出结构化诊断报告（问题类别 + 严重程度 + 改进建议）。
-
-审核流程：
-  1. Gemini Flash 图片预审 → 生成结构化诊断
-  2. 阈值判断（overall >= 70 自动通过，< 40 自动驳回，中间人工复审）
-  3. 输出问题维度 + 置信度
+"""AI 自动审核 —— 用 Gemini Flash 做图片质量 L2/L3 评分。
+SIGIR 2025 研究显示 MLLM 与人工评审相关性可达 0.85+ Spearman。
+审核流程：Gemini 预审 → 阈值判断 → 输出问题维度 + 置信度。
 """
 
 import json
@@ -18,7 +8,7 @@ import json
 from app.config import settings
 from app.core.logging import logger
 
-# 审核维度定义（与 L2/L3 对齐）
+# 审核维度定义（跟 L2/L3 对齐）
 REVIEW_DIMENSIONS = {
     "sharpness": {
         "label": "清晰度",
@@ -50,10 +40,10 @@ REVIEW_DIMENSIONS = {
     },
 }
 
-# 自动审核阈值
-AUTO_APPROVE_THRESHOLD = 70  # >= 70 分自动通过
-AUTO_REJECT_THRESHOLD = 40   # < 40 分自动驳回
-# 中间区间 [40, 70) → 人工复审
+# 阈值设定
+AUTO_APPROVE_THRESHOLD = 70  # >= 70 自动通过
+AUTO_REJECT_THRESHOLD = 40   # < 40 自动驳回
+# [40, 70) → 人工复审
 
 
 async def auto_review_image(
@@ -61,24 +51,7 @@ async def auto_review_image(
     product_category: str = "",
     product_title: str = "",
 ) -> dict:
-    """使用 Gemini Flash 自动审核图片质量
-
-    Args:
-        image_url: 图片 URL
-        product_category: 商品品类（用于上下文）
-        product_title: 商品标题（用于图文一致性检查）
-
-    Returns:
-        {
-            "overall_score": int (0-100),
-            "passed": bool,
-            "need_manual_review": bool,
-            "dimensions": {...},
-            "diagnosis": str,
-            "suggestions": [...],
-            "model": "gemini-2.0-flash",
-        }
-    """
+    """用 Gemini Flash 审核图片质量，返回评分 + 诊断 + 建议。"""
     api_key = settings.GEMINI_API_KEY
     if not api_key:
         if settings.APP_ENV == "production":
@@ -93,13 +66,13 @@ async def auto_review_image(
         http_options = types.HttpOptions(base_url=settings.GEMINI_BASE_URL) if settings.GEMINI_BASE_URL else None
         client = genai.Client(api_key=api_key, http_options=http_options)
 
-        # 构建审核 prompt
         context = ""
         if product_category:
             context += f"商品品类: {product_category}\n"
         if product_title:
             context += f"商品标题: {product_title}\n"
 
+        # 这段 prompt 是 AI 写的，调了好几次才稳定输出 JSON 格式
         prompt = f"""You are an e-commerce product image quality auditor.
 Evaluate this product image for the following dimensions.
 {context}
@@ -133,7 +106,6 @@ Return ONLY a JSON object (no markdown, no explanation):
   "suggestions": ["<improvement tip 1>", "<improvement tip 2>"]
 }}"""
 
-        # 下载图片并转为 inline_data 传给 Gemini
         from app.services.image_fetcher import fetch_image
 
         fetched = await fetch_image(image_url)
@@ -153,7 +125,7 @@ Return ONLY a JSON object (no markdown, no explanation):
         )
 
         result_text = response.text.strip()
-        # 清理可能的 markdown 代码块标记
+        # 清理 markdown 代码块标记（Gemini 偶尔会在 JSON 外面包 ```）
         if result_text.startswith("```"):
             result_text = result_text.split("\n", 1)[-1] if "\n" in result_text else result_text
         if result_text.endswith("```"):
@@ -168,7 +140,7 @@ Return ONLY a JSON object (no markdown, no explanation):
         )
         review["model"] = "gemini-2.0-flash"
 
-        # 提取严重问题维度
+        # 提取严重/中等问题维度
         problem_dimensions = {}
         for dim_key, dim_data in review.get("dimensions", {}).items():
             severity = dim_data.get("severity", "轻微")
@@ -204,10 +176,11 @@ Return ONLY a JSON object (no markdown, no explanation):
 
 
 def _mock_auto_review(image_url: str = "") -> dict:
-    """模拟审核（Gemini 不可用时的降级）
-
-    基于图片属性（分辨率、文件大小、宽高比）计算启发式评分，
-    使不同图片获得不同分数而非固定值。
+    """Gemini 不可用时降级为启发式评分。
+    
+    根据图片分辨率/文件大小/宽高比算一个启发式分数，
+    让不同图片得分不同而不是固定值。
+    先这样，后面有更好的降级方案再改。
     """
     base_score = 50.0
     image_info = {}
@@ -238,7 +211,7 @@ def _mock_auto_review(image_url: str = "") -> dict:
                 "file_size_kb": round(file_size_kb, 1),
             }
 
-            # 分辨率评分：min(边) >= 800 得满分 30，按比例递减
+            # 分辨率评分：min(边) >= 800 得满分 30
             min_dim = min(width, height)
             res_score = min(30.0, min_dim / 800 * 30)
             base_score += res_score
@@ -248,7 +221,7 @@ def _mock_auto_review(image_url: str = "") -> dict:
             aspect_score = max(0.0, 20.0 - abs(aspect - 1.0) * 40)
             base_score += aspect_score
 
-            # 文件大小评分：>= 100KB 得满分 20
+            # 文件大小：>= 100KB 得满分 20
             size_score = min(20.0, file_size_kb / 100 * 20)
             base_score += size_score
 
@@ -271,7 +244,7 @@ def _mock_auto_review(image_url: str = "") -> dict:
 
 
 def format_review_for_ui(review: dict) -> dict:
-    """格式化审核结果为前端展示格式"""
+    """格式化为前端展示用的数据结构。"""
     return {
         "overall_score": review.get("overall_score", 0),
         "passed": review.get("passed", False),

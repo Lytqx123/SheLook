@@ -5,7 +5,6 @@ from pydantic import BaseModel, Field
 
 class LoginRequest(BaseModel):
     """仅开发/测试环境可用的本地身份。"""
-
     user_id: str = Field(..., min_length=1, max_length=128)
     username: str | None = None
     role: str | None = Field(None, pattern="^(admin|viewer)$")

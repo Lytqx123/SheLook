@@ -1,16 +1,9 @@
-"""AI 生成审计日志服务
-
-提供：
-- audit_operation(): 写入审计日志
-- request_id 由 RequestIDMiddleware 统一注入，本模块只负责审计记录持久化
-- query_audit_logs(): 按条件查询日志（供监管接口使用）
-"""
+"""AI 生成审计日志，记录每次生图操作的完整链路"""
 
 import uuid
 
 from app.core.logging import logger
 
-# ---- 审计日志写入 ----
 
 async def audit_operation(
     operation: str,
@@ -31,11 +24,7 @@ async def audit_operation(
     ip_address: str | None = None,
     user_agent: str | None = None,
 ) -> int:
-    """写入一条审计日志
-
-    Returns:
-        创建的 AuditLog.id
-    """
+    """写一条审计日志，返回记录 ID。失败返回 -1"""
     from app.db.session import async_session_factory
     from app.models.audit_log import AuditLog
 
@@ -72,8 +61,6 @@ async def audit_operation(
         return -1
 
 
-# ---- 审计日志查询 ----
-
 async def query_audit_logs(
     *,
     request_id: str | None = None,
@@ -86,13 +73,7 @@ async def query_audit_logs(
     limit: int = 100,
     offset: int = 0,
 ) -> dict:
-    """按条件查询审计日志
-
-    用于监管接口 /api/audit/logs
-
-    Returns:
-        {"total": int, "items": [...], "limit": int, "offset": int}
-    """
+    """按条件查审计日志，给监管接口 /api/audit/logs 用"""
     from sqlalchemy import func, select
 
     from app.db.session import async_session_factory
@@ -116,12 +97,11 @@ async def query_audit_logs(
         if end_date:
             query = query.where(AuditLog.created_at <= end_date)
 
-        # 总数
+        # 先查总数再分页
         count_query = select(func.count()).select_from(query.subquery())
         total_result = await db.execute(count_query)
         total = total_result.scalar() or 0
 
-        # 分页
         query = query.order_by(AuditLog.created_at.desc()).limit(limit).offset(offset)
         result = await db.execute(query)
         items = result.scalars().all()

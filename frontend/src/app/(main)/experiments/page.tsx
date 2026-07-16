@@ -1,8 +1,7 @@
 import HydrationGuard from "@/components/HydrationGuard";
 import ExperimentsList from "./ExperimentsList";
 
-// 跳过构建时预渲染；HydrationGuard 确保运行时仅在客户端渲染
-export const dynamic = "force-dynamic";
+export const dynamic = "force-dynamic"; // 客户端组件，跳过SSR
 
 export default function ExperimentsPage() {
   return (

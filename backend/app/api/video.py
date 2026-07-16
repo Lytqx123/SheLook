@@ -1,4 +1,4 @@
-"""AI 视频生成 API —— Kling 主通道 + Runway 降级通道。"""
+"""AI 视频生成 API —— Kling 主通道 + Runway 降级"""
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
@@ -18,19 +18,11 @@ async def generate_video(
     body: VideoGenerateRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """生成商品展示短视频
-
-    降级顺序：Kling API → Runway API；全部不可用时明确返回 unavailable。
-
-    支持风格：
-      - product_showcase: 360° 产品旋转展示
-      - lifestyle: 生活场景展示
-      - unboxing: 开箱演示
-    """
+    """生成商品短视频，Kling → Runway 降级，都不行就报 unavailable"""
     from app.models.image import GeneratedImage
     from app.services.video_generator import generate_product_video
 
-    # 如果提供了 image_id 但没给 image_url，从数据库查询
+    # 有 image_id 就用它查 URL
     image_url = body.image_url
     if not image_url and body.image_id:
         img_result = await db.execute(select(GeneratedImage).where(GeneratedImage.id == body.image_id))
@@ -50,7 +42,7 @@ async def generate_video(
         style=body.style,
     )
 
-    # 写入审计日志
+    # 写审计日志
     try:
         from app.core.audit import audit_operation
         trace_id = getattr(request.state, "audit_trace_id", None)
@@ -75,7 +67,7 @@ async def generate_video(
 
 @router.get("/providers")
 async def list_providers(request: Request):
-    """列出可用的视频生成提供商及预估成本"""
+    """列出可用视频生成提供商及预估成本"""
     from app.config import settings
 
     kling_configured = bool(

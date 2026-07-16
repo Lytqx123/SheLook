@@ -1,6 +1,6 @@
-"""数据指标 API —— 批量写入 + 导入统计 + 平台同步
+"""数据指标 API —— 批量写入 / 导入统计 / 平台同步
 
-所有写入端点需要 X-API-Key 鉴权，使用 secrets.compare_digest 防时序攻击。
+写入需要 X-API-Key，用 secrets.compare_digest 防时序攻击。
 """
 
 import secrets
@@ -31,19 +31,16 @@ from app.schemas.metrics import (
 router = APIRouter(prefix="/api/metrics", tags=["Metrics"])
 
 
-# ============================================================
-# API Key 鉴权
-# ============================================================
+# ---- API Key 鉴权 ----
 
 async def verify_metrics_api_key(
     x_api_key: str | None = Header(None, alias="X-API-Key", description="Metrics API Key"),
 ) -> str:
-    """验证 Metrics API Key（使用 secrets.compare_digest 防时序攻击）
+    """验证 API Key（secrets.compare_digest 防时序攻击）
 
-    配置项 METRICS_API_KEY 为空时跳过鉴权（仅开发环境）。
+    没配 METRICS_API_KEY 的时候直接放行，仅开发环境。
     """
     if not settings.METRICS_API_KEY:
-        # 开发模式：未配置 API Key 时放行
         return "anonymous"
 
     if not secrets.compare_digest(x_api_key or "", settings.METRICS_API_KEY):
@@ -53,9 +50,7 @@ async def verify_metrics_api_key(
     return x_api_key or ""
 
 
-# ============================================================
-# 批量写入
-# ============================================================
+# ---- 批量写入 ----
 
 @router.post("/batch", response_model=MetricsBatchResponse)
 async def batch_upsert_metrics(
@@ -63,31 +58,7 @@ async def batch_upsert_metrics(
     db: AsyncSession = Depends(get_db),
     api_key: str = Depends(verify_metrics_api_key),
 ):
-    """批量写入指标数据（upsert）
-
-    使用 PostgreSQL INSERT ... ON CONFLICT (image_id, date) DO UPDATE
-    实现幂等写入。单次最多 1000 条。
-
-    请求头：
-        X-API-Key: <metrics_api_key>
-
-    请求体示例：
-        {
-            "items": [
-                {
-                    "image_id": 1,
-                    "date": "2026-07-14",
-                    "impressions": 5000,
-                    "clicks": 150,
-                    "ctr": 0.03,
-                    "cvr": 0.05,
-                    "add_to_cart_rate": 0.12,
-                    "return_rate": 0.08,
-                    "revenue": 1250.50
-                }
-            ]
-        }
-    """
+    """批量 upsert 指标，单次最多 1000 条，幂等写入"""
     items = body.items
     total = len(items)
     upserted = 0
@@ -152,17 +123,14 @@ async def batch_upsert_metrics(
     )
 
 
-# ============================================================
-# 导入统计
-# ============================================================
+# ---- 导入统计 ----
 
 @router.get("/stats", response_model=MetricsStatsResponse)
 async def get_metrics_stats(
     db: AsyncSession = Depends(get_db),
     user: UserInfo = Depends(require_auth),
 ):
-    """查询导入统计：总记录数、日期范围、涉及图片数"""
-    # 总记录数
+    """查导入统计：总记录数、日期范围、涉及图片数"""
     count_stmt = select(func.count(DailyMetric.id))
     total_records = (await db.execute(count_stmt)).scalar() or 0
 
@@ -172,11 +140,9 @@ async def get_metrics_stats(
             total_images=0,
         )
 
-    # 涉及图片数
     images_stmt = select(func.count(func.distinct(DailyMetric.image_id)))
     total_images = (await db.execute(images_stmt)).scalar() or 0
 
-    # 日期范围
     range_stmt = select(
         func.min(DailyMetric.date).label("earliest"),
         func.max(DailyMetric.date).label("latest"),
@@ -196,9 +162,7 @@ async def get_metrics_stats(
     )
 
 
-# ============================================================
-# 平台同步（Phase 2.2）
-# ============================================================
+# ---- 平台同步 ----
 
 @router.post("/sync/{platform}", response_model=MetricsSyncResponse)
 async def sync_platform_metrics(
@@ -208,25 +172,18 @@ async def sync_platform_metrics(
     db: AsyncSession = Depends(get_db),
     api_key: str = Depends(verify_metrics_api_key),
 ):
-    """手动触发指定平台的数据同步
+    """手动触发平台数据同步（shopee / lazada / amazon）
 
-    从平台 SDK 拉取指标数据后 upsert 到 daily_metrics 表。
-
-    Args:
-        platform: 平台标识 (shopee | lazada | amazon)
-        date_from: 起始日期 YYYY-MM-DD（默认昨天）
-        date_to: 结束日期 YYYY-MM-DD（默认今天）
+    date_from / date_to: YYYY-MM-DD，默认昨天到今天
     """
     from datetime import date, timedelta
 
     from app.services.metrics_collector import get_collector
 
-    # 校验平台
     valid_platforms = {"shopee", "lazada", "amazon"}
     if platform not in valid_platforms:
         raise ValidationError(f"不支持的平台: {platform}，可选值: {', '.join(sorted(valid_platforms))}")
 
-    # 日期范围
     today = date.today()
     d_from = date.fromisoformat(date_from) if date_from else today - timedelta(days=1)
     d_to = date.fromisoformat(date_to) if date_to else today
@@ -263,7 +220,7 @@ async def sync_platform_metrics(
         ).scalars().all()
         mappings = {row.external_id: row.image_id for row in mapping_rows}
 
-        # 仅使用显式映射写入，绝不再用进程随机 hash 伪造 image_id。
+        # 只用显式映射写，别用随机 hash 伪造 image_id
         upserted = 0
         errors: list[str] = []
         for raw in raw_items:
@@ -340,6 +297,7 @@ async def list_external_mappings(
     db: AsyncSession = Depends(get_db),
     user: UserInfo = Depends(require_auth),
 ):
+    """查平台映射列表"""
     query = select(ExternalListingMapping).order_by(ExternalListingMapping.updated_at.desc())
     if platform:
         query = query.where(ExternalListingMapping.platform == platform)
@@ -352,6 +310,7 @@ async def upsert_external_mapping(
     db: AsyncSession = Depends(get_db),
     user: UserInfo = Depends(require_auth),
 ):
+    """新增/更新平台映射（仅管理员）"""
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="仅管理员可维护平台映射")
     if not (await db.execute(select(GeneratedImage.id).where(GeneratedImage.id == body.image_id))).scalar_one_or_none():
@@ -369,6 +328,7 @@ async def delete_external_mapping(
     db: AsyncSession = Depends(get_db),
     user: UserInfo = Depends(require_auth),
 ):
+    """删除平台映射（仅管理员）"""
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="仅管理员可维护平台映射")
     mapping = (

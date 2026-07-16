@@ -1,8 +1,4 @@
-"""供应商 API —— 面向供应商的图片分析与报告
-
-所有端点无需 JWT 认证，通过限流保护。
-"""
-
+"""供应商端 API —— 不用登录，有全局限流兜底"""
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
@@ -22,28 +18,15 @@ from app.services.supplier_report import SupplierReportService
 
 router = APIRouter(prefix="/api/supplier", tags=["Supplier"])
 
-# ============================================================
-# 上传并分析
-# ============================================================
+
+# ---- 上传 & 分析 ----
 
 @router.post("/upload-and-analyze", response_model=SupplierReportResponse)
 async def upload_and_analyze(
     body: SupplierAnalyzeRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """供应商上传图片并获取分析报告
-
-    执行三级质检 + 品类标杆对比 + CTR/退货预测 + 改进建议。
-    无需认证，但受全局限流保护。
-
-    请求体示例：
-        {
-            "image_url": "https://minio.example.com/product-images/xxx.jpg",
-            "category": "dress",
-            "market": "SG",
-            "supplier_id": "supplier_001"
-        }
-    """
+    """供应商上传图片，跑三级质检 + 品类对比 + CTR/退货预测"""
     # 校验品类
     valid_categories = {
         "dress", "shoes", "tops", "bottoms", "outerwear",
@@ -64,7 +47,7 @@ async def upload_and_analyze(
             f"不支持的市场: {body.market}，可选值: {', '.join(sorted(valid_markets))}"
         )
 
-    # 图片 URL 安全检查
+    # 图片 URL 不能为空
     if not body.image_url:
         raise ValidationError("image_url 不能为空")
 
@@ -75,7 +58,7 @@ async def upload_and_analyze(
         supplier_id=body.supplier_id,
     )
 
-    # 执行分析
+    # 跑分析
     report = await SupplierReportService.analyze_image(
         image_path=body.image_url,
         category=body.category.lower(),
@@ -83,7 +66,7 @@ async def upload_and_analyze(
         db=db,
     )
 
-    # 持久化报告历史，支持进程重启和多 worker 查询。
+    # 持久化报告，方便后续查历史
     if body.supplier_id:
         db.add(
             SupplierAnalysisReport(
@@ -98,9 +81,7 @@ async def upload_and_analyze(
     return report
 
 
-# ============================================================
-# 查询历史报告
-# ============================================================
+# ---- 查历史报告 ----
 
 @router.get("/report/{supplier_id}", response_model=SupplierReportListResponse)
 async def get_supplier_reports(
@@ -109,10 +90,7 @@ async def get_supplier_reports(
     offset: int = Query(0, ge=0, description="偏移量"),
     db: AsyncSession = Depends(get_db),
 ):
-    """查询供应商的历史分析报告
-
-    无需认证。返回按时间倒序排列的报告列表。
-    """
+    """查供应商的历史分析报告，按时间倒序"""
     total = (
         await db.execute(
             select(func.count(SupplierAnalysisReport.id)).where(

@@ -9,11 +9,7 @@ from app.db.base import Base
 
 
 class ProductEmbedding(Base):
-    """商品向量嵌入 —— 用于相似商品检索（pgvector HNSW 索引）
-
-    注意：embedding 字段在迁移里声明为 Text，实际通过 ::vector(512) 强转使用。
-    存的是 CLIP 等模型产出的 512 维向量（JSON 或裸文本皆可，取决于 PgvectorStore 写入方式）。
-    """
+    """商品向量嵌入 —— 用于相似商品检索（pgvector HNSW 索引）"""
 
     __tablename__ = "product_embeddings"
     __table_args__ = (
@@ -24,6 +20,7 @@ class ProductEmbedding(Base):
     product_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("products.id"), nullable=False
     )
+    # embedding 存Text再通过::vector(512)强转，因为SQLAlchemy vector类型不太好用
     embedding: Mapped[str | None] = mapped_column(Text, nullable=True)
     embedding_model: Mapped[str] = mapped_column(
         String(64), server_default="CLIP-ViT-B/32", nullable=False

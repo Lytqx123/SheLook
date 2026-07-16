@@ -1,7 +1,4 @@
-"""数据指标相关 Pydantic 模型
-
-供 metrics API 和 metrics_collector 使用的请求/响应 schema。
-"""
+"""数据指标相关 Pydantic 模型。"""
 
 import datetime
 
@@ -10,7 +7,6 @@ from pydantic import BaseModel, Field, field_validator
 
 class MetricsBatchItem(BaseModel):
     """单条指标数据（用于批量 upsert）"""
-
     image_id: int = Field(..., description="图片 ID", ge=1)
     date: datetime.date = Field(..., description="数据日期，格式 YYYY-MM-DD")
     source_platform: str = Field(
@@ -36,7 +32,6 @@ class MetricsBatchItem(BaseModel):
 
 class MetricsBatchRequest(BaseModel):
     """批量写入请求 —— 单次最多 1000 条"""
-
     items: list[MetricsBatchItem] = Field(
         ..., min_length=1, max_length=1000, description="指标数据列表"
     )
@@ -44,7 +39,6 @@ class MetricsBatchRequest(BaseModel):
 
 class MetricsUpsertResult(BaseModel):
     """单条 upsert 结果"""
-
     image_id: int
     date: datetime.date
     status: str = Field(..., description="upserted | failed")
@@ -53,7 +47,6 @@ class MetricsUpsertResult(BaseModel):
 
 class MetricsBatchResponse(BaseModel):
     """批量写入响应"""
-
     total: int = Field(..., description="请求总条数")
     upserted: int = Field(0, description="成功 upsert 条数")
     failed: int = Field(0, description="失败条数")
@@ -62,7 +55,6 @@ class MetricsBatchResponse(BaseModel):
 
 class MetricsStatsResponse(BaseModel):
     """导入统计响应"""
-
     total_records: int = Field(..., description="总记录数")
     total_images: int = Field(..., description="涉及图片数")
     earliest_date: datetime.date | None = Field(None, description="最早记录日期")
@@ -72,7 +64,6 @@ class MetricsStatsResponse(BaseModel):
 
 class MetricsSyncResponse(BaseModel):
     """平台同步响应"""
-
     platform: str = Field(..., description="平台标识")
     status: str = Field(..., description="success | partial | failed")
     date_range: str | None = Field(None, description="同步日期范围")
@@ -84,7 +75,6 @@ class MetricsSyncResponse(BaseModel):
 
 class MetricsRawItem(BaseModel):
     """平台原始指标数据（中间表示）"""
-
     external_id: str = Field(..., description="平台侧唯一标识")
     date: datetime.date
     impressions: int = 0

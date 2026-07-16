@@ -23,7 +23,7 @@ router = APIRouter(prefix="/api/products", tags=["Products"])
 
 
 def _get_minio():
-    """延迟导入 MinIO 客户端（避免模块加载时连接）"""
+    """延迟导入 MinIO，避免模块加载时就连"""
     from minio import Minio
 
     from app.config import settings
@@ -36,7 +36,7 @@ def _get_minio():
 
 
 def _batch_scheme(product: Product) -> list[SchemeOut]:
-    """把 product.schemes 转换为响应模型列表"""
+    """product.schemes → 响应模型列表"""
     return [
         SchemeOut(
             id=s.id,
@@ -52,12 +52,9 @@ def _batch_scheme(product: Product) -> list[SchemeOut]:
 
 
 def _to_product_out(product: Product, schemes: list[SchemeOut] | None = None) -> ProductOut:
-    """Product ORM 实例转响应模型(统一构造入口,避免重复字段映射)
+    """ORM 转响应模型，统一入口避免字段映射散得到处都是
 
-    Args:
-        product: ORM 模型实例
-        schemes: 显式传入的方案列表(用于 create 等无需加载关联的场景),
-                 不传则从 product.schemes 自动转换
+    schemes 可以手动传（create 时 product 还没关联），不传就从 product.schemes 自动转。
     """
     return ProductOut(
         id=product.id,
@@ -83,7 +80,7 @@ async def list_products(
     category: str | None = None,
     status: str | None = None,
 ):
-    """分页查询商品列表，支持品类和状态筛选"""
+    """分页查商品，支持品类和状态筛选"""
     page = pagination["page"]
     page_size = pagination["page_size"]
     request_id = request_id_var.get()
@@ -120,7 +117,7 @@ async def get_product(
     product_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """获取单个商品详情（含关联方案）"""
+    """查单个商品详情（含关联方案）"""
     result = await db.execute(select(Product).options(selectinload(Product.schemes)).where(Product.id == product_id))
     product = result.scalar_one_or_none()
     if not product:
@@ -135,7 +132,7 @@ async def create_product(
     body: ProductCreate,
     db: AsyncSession = Depends(get_db),
 ):
-    """创建商品（SKU 去重校验）"""
+    """创建商品，会做 SKU 去重"""
     # SKU 唯一性校验
     existing = await db.execute(select(Product).where(Product.sku_code == body.sku_code))
     if existing.scalar_one_or_none():
@@ -182,6 +179,7 @@ async def update_product(
     await db.commit()
     await db.refresh(product)
 
+    # 如果图片变了且已发布，重新触发向量索引
     if image_changed and product.status == ProductStatus.PUBLISHED:
         try:
             from app.tasks.vector_task import index_product_embedding
@@ -200,7 +198,7 @@ async def delete_product(
     product_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """删除商品（软删除：归档）"""
+    """删除商品（软删除，改归档状态）"""
     result = await db.execute(select(Product).where(Product.id == product_id))
     product = result.scalar_one_or_none()
     if not product:
@@ -224,7 +222,7 @@ async def publish_product(
     product_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """发布商品（将状态改为 published）"""
+    """发布商品 —— 把状态改成 published，同时把关联图片从私桶挪到公桶"""
     result = await db.execute(
         select(Product).options(selectinload(Product.schemes)).where(Product.id == product_id)
     )
@@ -264,7 +262,7 @@ async def publish_product(
     await db.commit()
     await db.refresh(product)
 
-    # 数据库已确认公开状态后再清理私有副本；清理失败不回滚已成功的发布。
+    # DB 确认公开后再清私桶副本，失败了不回滚
     for bucket, object_key in private_sources:
         try:
             await remove_object(bucket, object_key)

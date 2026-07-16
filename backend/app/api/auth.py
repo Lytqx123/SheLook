@@ -52,7 +52,7 @@ async def oidc_callback(body: OIDCCallbackRequest) -> TokenResponse:
 
 @router.post("/token", response_model=TokenResponse)
 async def development_login(body: LoginRequest) -> TokenResponse:
-    """兼容本地开发；生产环境与启用 OIDC 时永不签发任意身份。"""
+    """本地开发用，生产环境直接 404"""
     if settings.APP_ENV == "production" or settings.ENABLE_AUTH:
         raise HTTPException(status_code=404, detail="本地登录不可用")
     role = body.role or "viewer"

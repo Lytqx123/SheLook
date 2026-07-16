@@ -9,7 +9,7 @@ class PredictionRequest(BaseModel):
 
 
 class PredictionResponse(BaseModel):
-    """预测响应（v2 扩展：品类归一化 CTR + 退货模型来源）"""
+    """预测响应（v2 扩展）"""
     record_id: int
     image_id: int
     predicted_ctr: float | None

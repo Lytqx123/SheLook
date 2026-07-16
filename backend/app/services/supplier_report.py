@@ -1,12 +1,4 @@
-"""供应商分析报告服务
-
-核心功能：
-1. analyze_image() — 执行三级质检 + 品类标杆对比 + 生成改进建议
-2. generate_improvement_suggestions() — 基于差距最大的维度生成具体建议
-3. get_benchmark() — 查询品类 Top 20% CTR 的标杆值
-
-所有方法均为纯 CPU 计算，无外部 API 调用。
-"""
+"""供应商分析报告服务 —— 三级质检 + 品类标杆对比 + 改进建议。"""
 
 import asyncio
 import hashlib
@@ -26,9 +18,7 @@ from app.schemas.supplier import (
 from app.services.predictor import get_runtime_predictor
 from app.services.reward_scorer import full_quality_pipeline
 
-# ============================================================
-# 市场映射 —— 供应商 API 国家代码 → 预测器市场代码
-# ============================================================
+# --- 市场映射：供应商 API 国家代码 → 预测器市场代码
 
 MARKET_MAPPING: dict[str, str] = {
     "SG": "seasia", "MY": "seasia", "TH": "seasia",
@@ -48,10 +38,7 @@ def _map_market(supplier_market: str) -> str:
 def _predict_supplier_metrics(
     category: str, market: str, image_path: str
 ) -> dict[str, float | None]:
-    """同步执行供应商图片的 CTR / 退货风险预测（含 CLIP 推理）
-
-    供 analyze_image 通过 asyncio.to_thread 调用，避免阻塞事件循环。
-    """
+    """同步执行供应商图片的 CTR / 退货风险预测（含 CLIP 推理）"""
     predictor = get_runtime_predictor()
     predictor_market = _map_market(market)
     features = predictor.extract_features(
@@ -69,9 +56,7 @@ def _predict_supplier_metrics(
     }
 
 
-# ============================================================
-# 维度定义
-# ============================================================
+# --- 维度定义
 
 DIMENSION_META = [
     {"name": "sharpness", "display_name": "清晰度", "weight": 0.25},
@@ -81,7 +66,7 @@ DIMENSION_META = [
     {"name": "information_density", "display_name": "信息密度", "weight": 0.20},
 ]
 
-# 改进建议模板库 — 每个维度对应具体可操作的建议
+# 改进建议模板库
 SUGGESTION_TEMPLATES: dict[str, list[dict]] = {
     "sharpness": [
         {
@@ -146,9 +131,7 @@ SUGGESTION_TEMPLATES: dict[str, list[dict]] = {
 }
 
 
-# ============================================================
-# 核心服务
-# ============================================================
+# --- 核心服务
 
 class SupplierReportService:
     """供应商分析报告服务"""
@@ -166,25 +149,14 @@ class SupplierReportService:
         market: str,
         db: AsyncSession,
     ) -> SupplierReportResponse:
-        """分析供应商上传的图片，生成完整分析报告
-
-        Args:
-            image_path: 图片本地路径或 URL
-            category: 商品品类
-            market: 目标市场
-            db: 数据库会话
-
-        Returns:
-            SupplierReportResponse 完整分析报告
-        """
+        """分析供应商上传的图片，生成完整分析报告"""
         report_id = SupplierReportService.generate_report_id()
 
-        # ---- 1. 执行三级质检（含 CLIP 推理，通过 asyncio.to_thread 避免阻塞事件循环）----
+        # 1. 执行三级质检
         try:
             quality_result = await asyncio.to_thread(full_quality_pipeline, image_path)
         except Exception as e:
             logger.error(f"质检流水线失败: {e}")
-            # 降级：返回保守评估
             quality_result = {
                 "l1": {"passed": False, "issues": [{"dimension": "error", "passed": False}]},
                 "l2": {"overall_score": 50.0, "verdict": "manual_pending", "dimensions": {}},
@@ -195,10 +167,10 @@ class SupplierReportService:
 
         l2_dims = quality_result.get("l2", {}).get("dimensions", {})
 
-        # ---- 2. 获取品类标杆 ----
+        # 2. 获取品类标杆
         benchmark = await SupplierReportService._get_benchmark(category, db)
 
-        # ---- 3. 构建维度对比 ----
+        # 3. 构建维度对比
         dimensions = []
         for dim_meta in DIMENSION_META:
             dim_name = dim_meta["name"]
@@ -213,10 +185,10 @@ class SupplierReportService:
                 weight=dim_meta["weight"],
             ))
 
-        # ---- 4. 生成改进建议 ----
+        # 4. 生成改进建议
         suggestions = SupplierReportService._generate_suggestions(dimensions)
 
-        # ---- 5. 预测 CTR / 退货风险 ----
+        # 5. 预测 CTR / 退货风险
         predicted_ctr = None
         normalized_ctr = None
         return_risk = None
@@ -232,7 +204,7 @@ class SupplierReportService:
             except Exception as e:
                 logger.warning(f"预测失败: {e}")
 
-        # ---- 6. 构建响应 ----
+        # 6. 构建响应
         return SupplierReportResponse(
             report_id=report_id,
             image_url=image_path if image_path.startswith("http") else f"/images/{image_path}",
@@ -259,17 +231,12 @@ class SupplierReportService:
 
     @staticmethod
     async def _get_benchmark(category: str, db: AsyncSession) -> dict | None:
-        """查询品类 Top 20% CTR 的标杆值
-
-        从 daily_metrics 表按品类分组，取 CTR 最高的 20% 样本，
-        计算各质量维度的均值作为标杆。
-        """
+        """查询品类 Top 20% CTR 的标杆值"""
         try:
             from app.models.image import GeneratedImage, ImageScheme
             from app.models.prediction import DailyMetric
             from app.models.product import Product
 
-            # 查询该品类下所有有 CTR 数据的图片
             stmt = (
                 select(
                     GeneratedImage.id.label("image_id"),
@@ -351,25 +318,18 @@ class SupplierReportService:
 
     @staticmethod
     def _generate_suggestions(dimensions: list[DimensionScore]) -> list[ImprovementSuggestion]:
-        """基于各维度差距生成具体改进建议
-
-        选取差距最大的 3 个维度，从模板库匹配建议。
-        若所有维度均达标（差距 > -5），返回通用建议。
-        """
+        """基于各维度差距生成具体改进建议，选取差距最大的 3 个维度。"""
         suggestions: list[ImprovementSuggestion] = []
 
-        # 按差距升序排列（最差在前）
         sorted_dims = sorted(dimensions, key=lambda d: d.gap)
 
         priority = 1
         for dim in sorted_dims:
             if dim.gap >= -5:
-                # 差距小于 5 分，无需改进
                 continue
 
             templates = SUGGESTION_TEMPLATES.get(dim.name, [])
             if templates:
-                # 取第一个匹配模板
                 tpl = templates[0]
                 suggestions.append(ImprovementSuggestion(
                     dimension=dim.name,
@@ -383,7 +343,6 @@ class SupplierReportService:
             if priority > 4:
                 break
 
-        # 如果所有维度都达标，给出肯定反馈
         if not suggestions:
             suggestions.append(ImprovementSuggestion(
                 dimension="overall",

@@ -1,9 +1,4 @@
-"""Celery 异步生图任务 —— 三级降级 + 质量评估 + C2PA + 审计
-
-注意：sync_daily_metrics 和 retrain_models 两个定时任务
-已在 flywheel_task.py 中实现（调用 data_flywheel 服务），
-此处不再重复定义，避免 Celery 任务名冲突。
-"""
+"""Celery 异步生图任务 —— 三级降级 + 质量评估 + C2PA + 审计"""
 
 import asyncio
 import hashlib
@@ -30,11 +25,7 @@ def generate_single_image(
     generation_params: dict | None = None,
     request_id: str | None = None,
 ) -> dict:
-    """异步生图 + 质量评估 + C2PA manifest + 审计日志 + WebSocket 通知
-
-    供应商降级：Replicate / Google → 本地 SD；Mock 仅限显式启用的开发环境
-    完成后通过 Redis Pub/Sub 通知前端。
-    """
+    """异步生图 + 质量评估 + C2PA manifest + 审计日志"""
     from sqlalchemy import select
 
     from app.core.audit import audit_operation
@@ -45,7 +36,7 @@ def generate_single_image(
     from app.services.reward_scorer import evaluate_quality
 
     async def _persist_failure(error: Exception) -> None:
-        """最终重试耗尽后持久化失败状态，并通知等待中的客户端。"""
+        """最终重试耗尽后持久化失败状态。"""
         async with async_session_factory() as db:
             img_result = await db.execute(
                 select(GeneratedImage).where(GeneratedImage.id == image_id)
@@ -88,7 +79,6 @@ def generate_single_image(
                 image.error_message = None
                 await db.commit()
 
-                # 查询方案
                 scheme_result = await db.execute(
                     select(ImageScheme).where(ImageScheme.id == scheme_id)
                 )
@@ -108,7 +98,7 @@ def generate_single_image(
                     elif isinstance(tags, list):
                         prompt += ", " + ", ".join(str(t) for t in tags)
 
-                # 执行品类路由生图（按 product.category 分发模型）
+                # 按品类路由模型
                 category = None
                 product = None
                 if scheme and scheme.product_id:
@@ -135,7 +125,6 @@ def generate_single_image(
                 model_name = gen_result.get("model", "unknown")
                 image_url = gen_result["image_url"]
 
-                # 更新生成记录
                 img_result = await db.execute(
                     select(GeneratedImage).where(GeneratedImage.id == image_id)
                 )
@@ -175,7 +164,7 @@ def generate_single_image(
                     await db.commit()
                     duration_ms = int((time.time() - start_time) * 1000)
 
-                    # ---- 审计日志 ----
+                    # --- 审计日志
                     c2pa_present = bool(image.c2pa_manifest)
                     try:
                         await audit_operation(
@@ -204,7 +193,7 @@ def generate_single_image(
                             error=str(audit_error),
                         )
 
-                    # ---- Redis Pub/Sub 通知 ----
+                    # --- Redis Pub/Sub 通知
                     notify_data = {
                         "status": "completed",
                         "image_id": image_id,
@@ -267,6 +256,4 @@ def generate_single_image(
         raise self.retry(exc=e) from e
 
 
-# ========== Celery Beat 调度 ==========
-# sync_daily_metrics / retrain_models 定义在 flywheel_task.py
-# Beat 调度配置在 celery_app.py 的 beat_schedule 中引用任务名
+# --- sync_daily_metrics / retrain_models 在 flywheel_task.py 里定义

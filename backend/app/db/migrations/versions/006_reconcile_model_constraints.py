@@ -1,4 +1,4 @@
-"""对齐 ORM 约束并清理被唯一索引覆盖的普通索引
+"""对齐 ORM 约束并清理被唯一索引覆盖的普通索引。
 
 Revision ID: 006
 Revises: 005
@@ -75,7 +75,7 @@ def upgrade() -> None:
         nullable=False,
     )
 
-    # 唯一约束/索引已经能支持同字段查询，删除重复的普通索引。
+    # 唯一约束/索引已覆盖，删掉重复的普通索引
     for table_name, index_name in (
         ("products", "ix_products_sku_code"),
         ("product_embeddings", "ix_product_embeddings_product_id"),
@@ -84,6 +84,7 @@ def upgrade() -> None:
         if _has_index(table_name, index_name):
             op.drop_index(index_name, table_name=table_name)
 
+    # AI补的：comment与ORM里的不一致，这里手动对齐一下
     comments = {
         "request_id": "UUIDv4 请求唯一ID，关联一次提交请求",
         "prompt_hash": "生成 prompt 的 SHA-256 哈希（不存原始 prompt）",

@@ -1,19 +1,4 @@
-"""
-SheLook Mock 数据填充脚本
-
-插入 Demo 所需的全部数据：
-- 30款商品（连衣裙/上衣/裤装/外套）
-- 每款商品 3-5 套方案
-- 每套方案 4-6 张生成图片
-- 历史上的每日指标数据（60天）
-- A/B 实验数据（15个已完成实验）
-- 预测记录
-
-用法：
-    docker compose run backend python scripts/seed_data.py
-    或本地：
-    cd backend && python ../scripts/seed_data.py
-"""
+"""SheLook Demo 数据填充脚本。"""
 
 import asyncio
 import hashlib
@@ -26,7 +11,6 @@ from pathlib import Path
 from PIL import Image as PILImage
 from PIL import ImageDraw
 
-# 添加 backend 目录到 sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy import select, text
@@ -49,7 +33,7 @@ from app.models import (
 )
 from app.services.storage_service import get_minio_client, public_object_url
 
-# ── 商品数据 ────────────────────────────────────────────────
+# --- 商品数据
 
 PRODUCTS = [
     # 连衣裙 (12)
@@ -101,11 +85,10 @@ SCHEME_NAMES = [
 
 MARKETS = ["us", "eu", "me", "seasia"]
 
-# ── 辅助函数 ────────────────────────────────────────────────
 
+# --- 辅助函数
 
 def random_score(base: float, spread: float = 15) -> float:
-    """生成随机评分（0-100）"""
     return max(0, min(100, base + random.uniform(-spread, spread)))
 
 
@@ -140,18 +123,15 @@ def generate_quality_scores(review_status: str) -> dict:
 
 
 def pick_schemes_for_product(product_idx: int) -> list[int]:
-    """为一款商品选择 3-5 套方案"""
     n = random.choice([3, 4, 4, 5, 5])
     return random.sample(range(len(SCHEME_NAMES)), n)
 
 
 def pick_markets_for_image(product_markets: list[str]) -> list[str]:
-    """为一套方案选择生成的市场变体（4-6张图片）"""
     available = [m for m in MARKETS if m in product_markets]
     if len(available) < 4:
         available = MARKETS
     n = random.choice([4, 5, 6])
-    # 确保至少覆盖 2 个 market
     picks = random.choices(available, k=n)
     if len(set(picks)) < 2:
         picks[0] = available[1] if len(available) > 1 else available[0]
@@ -159,7 +139,6 @@ def pick_markets_for_image(product_markets: list[str]) -> list[str]:
 
 
 def _placeholder_bytes(label: str) -> bytes:
-    """生成可被真实读取/编码的轻量演示图，不留下指向不存在对象的假 URL。"""
     digest = hashlib.sha256(label.encode()).digest()
     background = tuple(80 + value % 140 for value in digest[:3])
     accent = tuple(30 + value % 180 for value in digest[3:6])
@@ -193,7 +172,6 @@ def _demo_storage_client():
 
 
 def _demo_skin_tone(market: str | None, identity: str) -> str:
-    """按市场基线稳定生成演示标签，使报告可复现且无需重复 CLIP。"""
     baseline = settings.FAIRNESS_MARKET_BASELINES.get(
         market or "default",
         settings.FAIRNESS_MARKET_BASELINES["default"],
@@ -216,8 +194,7 @@ def _is_legacy_demo_url(value: str | None) -> bool:
     return url.startswith("http://localhost:9000/") and not url.startswith(valid_prefix)
 
 
-# ── 主逻辑 ──────────────────────────────────────────────────
-
+# --- 主逻辑
 
 async def seed():
     async with async_session_factory() as session:
@@ -296,7 +273,6 @@ async def seed():
 
         await session.commit()
 
-        # 为每个 scheme 生成图片
         schemes = (await session.execute(select(ImageScheme))).scalars().all()
         for scheme in schemes:
             product = (await session.execute(
@@ -354,7 +330,6 @@ async def seed():
         print(f"  ✓ 已插入 {total_schemes} 套方案")
         print(f"  ✓ 已插入 {total_images} 张生成图片")
 
-        # 刷新 all_images 以获取 ID
         all_images = (await session.execute(select(GeneratedImage))).scalars().all()
 
         # 4. 插入每日指标（60天）
@@ -362,12 +337,10 @@ async def seed():
         today = date.today()
         metric_count = 0
 
-        # 只为 auto_approved 和部分 manual_pending 的图片生成 metrics
         active_images = [img for img in all_images if img.review_status != ReviewStatus.REJECTED]
-        for img in active_images[: len(active_images) // 2]:  # 取一半图片
+        for img in active_images[: len(active_images) // 2]:
             for days_ago in range(60):
                 d = today - timedelta(days=days_ago)
-                # 模拟季节性波动和周末效应
                 day_of_week = d.weekday()
                 weekend_boost = 1.3 if day_of_week >= 5 else 1.0
                 base_ctr = random.uniform(0.01, 0.06) * weekend_boost
@@ -430,12 +403,10 @@ async def seed():
                 a = auto_approved[i * 2]
                 b = auto_approved[i * 2 + 1]
 
-                # 随机生成CTR差异
                 ctr_a = round(random.uniform(0.015, 0.055), 4)
                 diff = random.uniform(-0.015, 0.02)
                 ctr_b = round(ctr_a + diff, 4)
 
-                # p-value 基于差异大小
                 if abs(diff) > 0.012:
                     p_val = round(random.uniform(0.001, 0.04), 4)
                     status = ExperimentStatus.COMPLETED
@@ -446,7 +417,6 @@ async def seed():
                 winner = a.id if ctr_a > ctr_b else b.id
                 start_d = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=random.randint(7, 30))
 
-                # 通过 scheme_id 关联查询 product_id（避免 async lazy loading）
                 scheme = next((s for s in schemes if s.id == a.scheme_id), None)
                 exp = ABExperiment(
                     product_id=scheme.product_id if scheme else 1,
@@ -505,7 +475,7 @@ async def seed():
 
 
 async def repair_demo_images() -> None:
-    """只修复旧版 seed 留下的假 localhost URL，不清空或改写业务数据。"""
+    """修复旧版 seed 留下的假 localhost URL。"""
     storage = _demo_storage_client()
     async with async_session_factory() as session:
         products = (await session.execute(select(Product))).scalars().all()

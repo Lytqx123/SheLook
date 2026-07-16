@@ -1,13 +1,8 @@
 """
-CTR / CVR 预估服务 —— 效果预测引擎（v2：准生产级）
+CTR / CVR 预估服务 —— 效果预测引擎
 
-升级内容：
-- 品类归一化 CTR（消除品类偏差）
-- 特征维度 33 维手工 + 48 维 CLIP = 81 维融合
-- 退货风险独立建模（HistGradientBoostingClassifier）
-- 模型版本管理（按日期版本化，保留最近 4 个版本，支持回滚）
-
-使用 sklearn HistGradientBoostingRegressor + HistGradientBoostingClassifier
+使用 sklearn HistGradientBoostingRegressor + HistGradientBoostingClassifier。
+31 维手工特征 + CLIP embedding 降维 48 维 = 79 维融合。
 """
 
 import os
@@ -29,32 +24,27 @@ MAX_VERSIONS = 4
 
 # CLIP embedding 降维目标维度（512 → 48 via 分块平均）
 EMBEDDING_DOWNSAMPLE_DIM = 48
-# 手工特征维度：19（品类 one-hot 10 + 价格 1 + 市场 1 + 相似CTR 1 + 复杂度 1 + 色彩直方图 5）
-#               + 12（拍摄角度3 + 模特数量4 + 留白比例1 + 文字占比1
-#                    + 饱和度均值1 + 信息熵1 + 宽高比偏差1）
-#               + 2 padding（补齐至 33 维，见 extract_features 末尾 while 循环）
-MANUAL_FEATURE_DIM = 33
+# 手工特征维度：品类 one-hot(10) + 价格(1) + 市场(1) + 相似CTR(1) + 复杂度(1) + 色彩直方图(5)
+#               + 拍摄角度(3) + 模特数量(4) + 留白(1) + 文字(1) + 饱和度(1) + 熵(1) + 宽高比(1)
+#               + padding 补齐至 31 维
+MANUAL_FEATURE_DIM = 31
 # 融合后总特征维度
 FUSED_FEATURE_DIM = MANUAL_FEATURE_DIM + EMBEDDING_DOWNSAMPLE_DIM
 
 
 class CTRPredictor:
-    """CTR / 爆款率 / 退货风险预估（v2：准生产级）"""
+    """CTR / 爆款率 / 退货风险预估"""
 
     def __init__(self):
         self.ctr_model: HistGradientBoostingRegressor | None = None
         self.hit_classifier: HistGradientBoostingClassifier | HistGradientBoostingRegressor | None = None
         self.return_classifier: HistGradientBoostingClassifier | None = None
         self.is_trained = False
-        # 品类归一化统计量 {category: {"mean": float, "std": float}}
         self._category_stats: dict[str, dict[str, float]] = {}
-        self._feature_version: int = 2  # v2 特征版本标识
+        self._feature_version: int = 2
 
     def _compute_category_stats(self, db_session=None):
-        """计算各品类的 CTR 均值和标准差（用于归一化）
-
-        优先从 daily_metrics 表聚合计算，若无数据则使用默认值。
-        """
+        """计算各品类的 CTR 均值和标准差（用于归一化）"""
         import asyncio
 
         async def _query_stats():
@@ -95,9 +85,7 @@ class CTRPredictor:
                 return {}
 
         try:
-            # Python 3.13+: get_running_loop() 在无运行循环时抛 RuntimeError
             asyncio.get_running_loop()
-            # 在异步上下文中，同步方法不能直接 await，返回默认值
             return {
                 "dress": {"mean": 0.025, "std": 0.01},
                 "shoes": {"mean": 0.020, "std": 0.008},
@@ -111,7 +99,6 @@ class CTRPredictor:
                 "kids": {"mean": 0.019, "std": 0.008},
             }
         except RuntimeError:
-            # 无运行中的事件循环，可以安全地 run_until_complete
             try:
                 loop = asyncio.new_event_loop()
                 stats = loop.run_until_complete(_query_stats())
@@ -147,14 +134,7 @@ class CTRPredictor:
         return normalized_ctr * s["std"] + s["mean"]
 
     def train(self, X: np.ndarray, y_ctr: np.ndarray, y_hit: np.ndarray, y_return: np.ndarray | None = None):
-        """训练 CTR / 爆款 / 退货模型
-
-        Args:
-            X: 特征矩阵 (n_samples, n_features)
-            y_ctr: CTR 标签
-            y_hit: 爆款标签 (0/1)
-            y_return: 退货标签 (0=低风险, 1=高风险)，未提供时跳过退货模型训练
-        """
+        """训练 CTR / 爆款 / 退货模型"""
         self.ctr_model = HistGradientBoostingRegressor(
             max_iter=100, max_depth=5, random_state=42,
         )
@@ -174,8 +154,6 @@ class CTRPredictor:
             self.return_classifier = None
 
         self.is_trained = True
-
-        # 训练后计算品类统计量，用于 CTR 归一化
         self._category_stats = self._compute_category_stats()
 
         logger.info(
@@ -214,7 +192,6 @@ class CTRPredictor:
             classes = list(getattr(self.hit_classifier, "classes_", []))
             prob = float(probabilities[classes.index(1)]) if 1 in classes else 0.0
         else:
-            # 兼容 v1 中以回归器保存的旧模型文件。
             prob = float(self.hit_classifier.predict(X)[0])
         prob = max(0.0, min(1.0, prob))
 
@@ -290,7 +267,7 @@ class CTRPredictor:
         }
 
     def predict(self, image: object) -> dict:
-        """统一预测入口 —— 从 GeneratedImage 对象提取特征后执行完整预估"""
+        """统一预测入口 —— 从 GeneratedImage 提取特征后完整预估"""
         scheme = getattr(image, "scheme", None)
         product = getattr(scheme, "product", None) if scheme else None
 
@@ -327,19 +304,12 @@ class CTRPredictor:
 
     @staticmethod
     def _normalize_price_range(price_range: str | None) -> str:
-        """将价格区间字符串归一化为 low/mid/high
-
-        支持格式：
-        - "low"/"mid"/"high"（直接返回）
-        - "$15-25"（按均价归一化：<15→low, <25→mid, >=25→high）
-        - None/空字符串 → "mid"
-        """
+        """将价格区间字符串归一化为 low/mid/high"""
         if not price_range:
             return "mid"
         pr = price_range.strip().lower()
         if pr in ("low", "mid", "high"):
             return pr
-        # 解析 "$15-25" / "$5-15" / "$25+" 等格式
         import re
         nums = re.findall(r"\d+", pr)
         if len(nums) >= 2:
@@ -388,13 +358,10 @@ class CTRPredictor:
         clip_embedding: list[float] | None = None,
         image_url: str | None = None,
     ) -> list[float]:
-        """特征工程（v2：81 维）
-
-        手工特征 33 维 + CLIP embedding 降维 48 维 = 81 维
-        """
+        """特征工程：手工特征 + CLIP 降维 = 共 FUSED_FEATURE_DIM 维"""
         features = []
 
-        # === 基础手工特征（19 维）===
+        # 手工特征：品类 one-hot(10)
         categories = ["dress", "shoes", "tops", "bottoms", "outerwear",
                        "accessories", "bags", "lingerie", "sportswear", "kids"]
         for cat in categories:
@@ -415,29 +382,23 @@ class CTRPredictor:
         else:
             features.extend([0.0] * 5)
 
-        # === 新增视觉特征（12 维）===
+        # 视觉特征（12 维）：CLIP Zero-shot + 像素统计
         visual_features = self._extract_visual_features(image_url) if image_url else {}
-        # 拍摄角度（3 维：俯拍/平视/仰视）
         angle = visual_features.get("angle", [0.33, 0.34, 0.33])
         features.extend(angle[:3])
-        # 模特数量（4 维：0/1/2-3/多人）
         model_count = visual_features.get("model_count", [0.4, 0.3, 0.2, 0.1])
         features.extend(model_count[:4])
-        # 留白比例
         features.append(visual_features.get("whitespace_ratio", 0.3))
-        # 文字占比
         features.append(visual_features.get("text_density", 0.1))
-        # 饱和度均值
         features.append(visual_features.get("saturation_mean", 0.5))
-        # 信息熵
         features.append(visual_features.get("image_entropy", 0.6))
-        # 宽高比偏差
         features.append(visual_features.get("aspect_ratio_deviation", 0.0))
 
-        # === CLIP embedding 降维特征 ===
+        # CLIP embedding 降维
         embedding_features = self._downsample_embedding(clip_embedding)
         features.extend(embedding_features)
 
+        # padding 补齐
         while len(features) < FUSED_FEATURE_DIM:
             features.append(0.0)
 
@@ -445,9 +406,9 @@ class CTRPredictor:
 
     @staticmethod
     def _extract_visual_features(image_url: str | None) -> dict:
-        """从图片 URL 提取视觉特征（拍摄角度/模特数量/留白/文字/饱和度等）
+        """从图片 URL 提取视觉特征（CLIP Zero-shot 优先，降级为像素估算）
 
-        优先使用 CLIP Zero-shot 分类，CLIP 不可用时降级为像素级估算。
+        这段 AI 写的，CLIP 分类拍角度/模特数量的 prompt 调了好几次。
         """
         result = {
             "angle": [0.33, 0.34, 0.33],
@@ -478,7 +439,7 @@ class CTRPredictor:
                 result["image_entropy"] = image_entropy(pixels)
                 result["aspect_ratio_deviation"] = aspect_ratio_deviation(image_url)
 
-            # CLIP Zero-shot 分类（拍摄角度 + 模特数量）
+            # CLIP Zero-shot 分类
             try:
                 from app.services.embedding_service import (
                     compute_similarity,
@@ -520,15 +481,10 @@ class CTRPredictor:
 
         return result
 
-    # === 模型版本管理 ===
+    # --- 模型版本管理
 
     def save(self, path: Path | None = None, versioned: bool = True):
-        """保存模型
-
-        Args:
-            path: 保存路径，None 时自动按日期版本化命名
-            versioned: True 时使用版本化路径并清理旧版本
-        """
+        """保存模型，版本化时自动按日期命名并清理旧版本"""
         if not self.is_trained:
             return
 
@@ -660,7 +616,7 @@ _loaded_model_mtime: float | None = None
 
 
 def get_runtime_predictor() -> CTRPredictor:
-    """返回运行时预测器；模型文件更新后自动热加载最新版本。"""
+    """返回运行时预测器；模型文件更新后自动热加载。"""
     global _loaded_model_mtime, _loaded_model_path
 
     model_path = CTRPredictor.get_latest_version()

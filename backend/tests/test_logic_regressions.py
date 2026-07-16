@@ -1,4 +1,4 @@
-"""核心业务修复的回归测试。"""
+"""核心业务回归测试"""
 
 import asyncio
 import json

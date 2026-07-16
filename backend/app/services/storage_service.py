@@ -90,9 +90,9 @@ async def store_image(
 
 
 async def publish_object(bucket: str, object_key: str) -> StoredObject:
-    """幂等地把私有对象复制进公开桶，并返回稳定 URL。
+    """幂等地把私有对象复制进公开桶，返回稳定 URL。
 
-    私有源对象由调用方在数据库提交成功后清理，避免“对象已移动、事务却回滚”。
+    私有源对象由调用方在数据库提交成功后清理，避免"对象已移动、事务却回滚"。
     """
     client = get_minio_client()
 

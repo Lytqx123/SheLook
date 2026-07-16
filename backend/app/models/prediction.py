@@ -22,7 +22,6 @@ from app.db.base import Base
 
 class ReturnRiskLevel(StrEnum):
     """退货风险等级"""
-
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
@@ -38,8 +37,8 @@ class PredictionRecord(Base):
         Integer, ForeignKey("generated_images.id"), nullable=False, index=True
     )
     predicted_ctr: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # 置信区间，存JSON {"lower": 0.012, "upper": 0.028}
     ctr_confidence_interval: Mapped[dict | None] = mapped_column(
-        # JSON 存置信区间 {"lower": 0.012, "upper": 0.028}
         JSON, nullable=True,
     )
     predicted_hit_probability: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -80,6 +79,7 @@ class DailyMetric(Base):
     cvr: Mapped[float | None] = mapped_column(Float, nullable=True)
     add_to_cart_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
     return_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # TODO: 后续接真实数据源，目前手动填
     revenue: Mapped[float | None] = mapped_column(Float, nullable=True)
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

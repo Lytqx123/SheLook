@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 
 class VisionRewardRequest(BaseModel):
-    """审美启发式评估请求（类型名为兼容已有客户端而保留）。"""
+    """审美启发式评估请求（类型名兼容已有客户端）"""
     image_path: str = Field(..., description="图片文件路径或 URL")
     dimensions: list[str] | None = Field(
         None,
@@ -26,7 +26,7 @@ class PairwiseComparison(BaseModel):
 
 
 class VisionRewardResponse(BaseModel):
-    """审美启发式评估响应（类型名为兼容已有客户端而保留）。"""
+    """审美启发式评估响应（类型名兼容已有客户端）"""
     overall_score: float = Field(..., description="综合评分（0-100）")
     dimension_scores: dict[str, float] = Field(
         default_factory=dict,

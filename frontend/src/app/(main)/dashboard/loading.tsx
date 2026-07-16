@@ -1,6 +1,6 @@
 import { Spin } from "antd";
 
-/** 仪表盘页面加载骨架屏 */
+// 这个loading是AI生成的，看着还行就不改了
 export default function DashboardLoading() {
   return (
     <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "60vh" }}>

@@ -1,4 +1,4 @@
-"""数据飞轮 API —— 手动触发数据回流与模型迭代"""
+"""数据飞轮 API —— 手动触发数据回流和模型迭代"""
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,18 +15,15 @@ async def trigger_sync(
 ):
     """手动触发数据回流 + 自动标注
 
-    通常由 Celery Beat 每天凌晨 2:00 自动执行，
-    此端点用于手动补跑或调试。
-
-    Args:
-        days: 回溯天数（默认 30 天）
+    平时由 Celery Beat 自动跑，这个端点主要用来调试和补跑。
+    days: 回溯天数，默认 30
     """
     from app.services.data_flywheel import aggregate_performance_data, auto_label_samples
 
     perf_data = await aggregate_performance_data(db, days=days)
     result = await auto_label_samples(db, performance_data=perf_data, days=days)
 
-    # 去掉 training_data（太大了不返回给前端）
+    # training_data 太大了，不返回前端
     result.pop("training_data", None)
 
     return {
@@ -41,14 +38,7 @@ async def trigger_retrain(
     days: int = 30,
     db: AsyncSession = Depends(get_db),
 ):
-    """手动触发模型迭代训练
-
-    通常由 Celery Beat 每周日凌晨 3:00 自动执行，
-    此端点用于手动触发或调试。
-
-    Args:
-        days: 回溯天数（默认 30 天）
-    """
+    """手动触发模型重训，平时也是 Celery Beat 定时跑"""
     from app.services.data_flywheel import trigger_model_retraining
 
     result = await trigger_model_retraining(db, days=days)

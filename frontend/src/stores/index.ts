@@ -19,7 +19,7 @@ export const useUIStore = create<UIState>()(
     {
       name: "shelook-ui-storage",
       storage: createJSONStorage(() =>
-        // SSR 安全：仅在浏览器环境中使用 localStorage
+        // 服务端没localStorage，随便糊一个storage对象顶一下
         typeof window !== "undefined"
           ? localStorage
           : {

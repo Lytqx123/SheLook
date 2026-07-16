@@ -11,14 +11,13 @@ from app.db.base import Base
 
 class ExperimentStatus(StrEnum):
     """实验状态：运行中 / 已停止 / 已完成"""
-
     RUNNING = "running"
     STOPPED = "stopped"
     COMPLETED = "completed"
 
 
 class ABExperiment(Base):
-    """A/B 实验表 —— 对比两版图片的 CTR 表现，含统计显著性"""
+    """A/B 实验表 —— 对比两版图片的 CTR 表现"""
 
     __tablename__ = "ab_experiments"
 
@@ -40,7 +39,7 @@ class ABExperiment(Base):
     )
     start_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     end_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    # 实验结果字段（stop 时回填）
+    # stop时回填结果，p_value直接用scipy算的
     result_ctr_a: Mapped[float | None] = mapped_column(Float, nullable=True)
     result_ctr_b: Mapped[float | None] = mapped_column(Float, nullable=True)
     p_value: Mapped[float | None] = mapped_column(Float, nullable=True)

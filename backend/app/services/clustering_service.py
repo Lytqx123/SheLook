@@ -1,10 +1,5 @@
-"""聚类分析服务 —— K-Means / HDBSCAN 聚类 + t-SNE 可视化
-
-基于 product_embeddings 表中的 CLIP 向量进行聚类分析，提供：
-- K-Means（含自动肘部法确定最优 k）
-- HDBSCAN（密度聚类，自动发现簇数）
-- 轮廓系数（silhouette_score）质量评估
-- t-SNE 二维降维坐标（用于前端可视化渲染）
+"""聚类分析 —— K-Means / HDBSCAN 聚类 + t-SNE 可视化。
+基于 product_embeddings 的 CLIP 向量做聚类，前端散点图渲染。
 """
 
 import ast
@@ -20,10 +15,7 @@ from app.core.logging import logger
 
 
 def _parse_embedding(raw: str | None) -> list[float] | None:
-    """将 pgvector Text 存储的向量字符串解析为浮点数列表。
-
-    支持格式：[0.1,0.2,...] 或 [0.1, 0.2, ...]
-    """
+    """把 pgvector Text 字段解析成 float 列表，兼容多种格式。"""
     if raw is None:
         return None
     raw = raw.strip()
@@ -37,7 +29,7 @@ def _parse_embedding(raw: str | None) -> list[float] | None:
         return json.loads(raw)
     except json.JSONDecodeError:
         pass
-    # 最后尝试按空白分割
+    # 最后尝试按空白分割（兜底）
     try:
         return [float(x) for x in raw.strip("[]() ").replace(",", " ").split()]
     except ValueError:
@@ -46,9 +38,8 @@ def _parse_embedding(raw: str | None) -> list[float] | None:
 
 
 def _build_filter_clause(category: str | None, market: str | None) -> tuple[str, dict]:
-    """构建 SQL WHERE 子句和参数"""
-    conditions = ["p.status = 'published'"]
     params: dict[str, Any] = {}
+    conditions = ["p.status = 'published'"]
 
     if category:
         conditions.append("p.category = :category")
@@ -66,12 +57,7 @@ async def _fetch_embeddings(
     category: str | None,
     market: str | None,
 ) -> tuple[list[int], np.ndarray]:
-    """从数据库读取过滤后的 embedding 数据。
-
-    Returns:
-        product_ids: 商品 ID 列表
-        matrix: (n_samples, 512) 的 numpy 数组
-    """
+    """从 DB 读过滤后的 embedding，返回 product_ids + (n, 512) 矩阵。"""
     where_clause, params = _build_filter_clause(category, market)
 
     sql = f"""
@@ -123,14 +109,9 @@ async def _fetch_embeddings(
 
 
 def _elbow_optimal_k(X: np.ndarray, max_k: int = 10) -> int:
-    """肘部法：计算 K-Means 在各 k 下的 inertia，通过二阶差分确定最优 k。
-
-    Args:
-        X: 特征矩阵 (n_samples, n_features)
-        max_k: 最大 k 值
-
-    Returns:
-        最优 k 值（>= 2）
+    """肘部法：二阶差分找最优 k。
+    
+    先这样，样本太少时效果一般，后面可以考虑加点 gap statistic。
     """
     from sklearn.cluster import KMeans
 
@@ -148,17 +129,14 @@ def _elbow_optimal_k(X: np.ndarray, max_k: int = 10) -> int:
     if len(inertias) < 2:
         return 2
 
-    # 计算一阶差分 D[k] = inertia[k-1] - inertia[k]
     diffs = [inertias[i] - inertias[i + 1] for i in range(len(inertias) - 1)]
-
-    # 二阶差分（加速度）A[k] = D[k-1] - D[k]
     accels = [diffs[i] - diffs[i + 1] for i in range(len(diffs) - 1)]
 
     if not accels:
         return 2
 
     best_idx = int(np.argmax(accels))
-    optimal_k = best_idx + 2  # k_range 从 2 开始
+    optimal_k = best_idx + 2
 
     logger.info(
         "肘部法确定最优 k",
@@ -173,11 +151,6 @@ def _run_kmeans(
     X: np.ndarray,
     n_clusters: int | None,
 ) -> dict[str, Any]:
-    """执行 K-Means 聚类。
-
-    Returns:
-        {"labels": np.ndarray, "silhouette": float, "centroids": np.ndarray, "n_clusters": int}
-    """
     from sklearn.cluster import KMeans
     from sklearn.metrics import silhouette_score
 
@@ -199,7 +172,6 @@ def _run_kmeans(
     labels = km.fit_predict(X)
     centroids = km.cluster_centers_
 
-    # 轮廓系数：至少需要 2 个簇且每簇至少 2 个样本
     unique_labels = set(labels)
     sil: float | None = None
     if len(unique_labels) >= 2:
@@ -223,10 +195,9 @@ def _run_kmeans(
 
 
 def _run_hdbscan(X: np.ndarray) -> dict[str, Any]:
-    """执行 HDBSCAN 密度聚类。
-
-    Returns:
-        {"labels": np.ndarray, "silhouette": float | None, "centroids": list, "n_clusters": int}
+    """HDBSCAN 密度聚类，自动发现簇数。
+    
+    这段AI写的，min_cluster_size 公式是启发式的，极端数据可能不适用。
     """
     import hdbscan
     from sklearn.metrics import silhouette_score
@@ -249,7 +220,6 @@ def _run_hdbscan(X: np.ndarray) -> dict[str, Any]:
     )
     labels = clusterer.fit_predict(X)
 
-    # 轮廓系数：排除噪声点（label == -1）计算
     unique_labels = set(labels)
     sil: float | None = None
     non_noise = [lb for lb in unique_labels if lb != -1]
@@ -260,7 +230,6 @@ def _run_hdbscan(X: np.ndarray) -> dict[str, Any]:
 
     n_clusters = len(non_noise)
 
-    # 为每个非噪声簇计算中心
     centroids: list[list[float]] = []
     for lb in sorted(non_noise):
         cluster_points = X[labels == lb]
@@ -283,17 +252,12 @@ def _run_hdbscan(X: np.ndarray) -> dict[str, Any]:
 
 
 def _run_tsne(X: np.ndarray) -> np.ndarray:
-    """t-SNE 降维到 2D。
-
-    Returns:
-        (n_samples, 2) 的 numpy 坐标数组
-    """
+    """t-SNE 降维到 2D，perplexity 自适应样本数。"""
     from sklearn.manifold import TSNE
 
     n = X.shape[0]
     if n == 1:
         return np.array([[0.0, 0.0]])
-    # 当样本数较少时，perplexity 不能超过样本数
     perplexity = min(30.0, max(1.0, (n - 1) / 3.0), n - 1.0)
     tsne = TSNE(n_components=2, random_state=42, perplexity=perplexity, learning_rate="auto")
     coords = tsne.fit_transform(X)
@@ -305,29 +269,16 @@ async def _compute_cluster_stats(
     product_ids: list[int],
     labels: np.ndarray,
 ) -> list[dict[str, Any]]:
-    """计算各簇的聚合统计信息（样本数、平均 CTR、平均退货率、主要品类）
-
-    Args:
-        db: 数据库异步会话
-        product_ids: 商品 ID 列表
-        labels: 聚类标签数组（与 product_ids 一一对应）
-
-    Returns:
-        [{"cluster_id": int, "size": int, "avg_ctr": float, "avg_return_rate": float,
-          "top_categories": [str], "label": str}, ...]
-    """
+    """算各簇的聚合统计：样本数、平均 CTR、平均退货率、主要品类。"""
     if not product_ids:
         return []
 
-    # 安全地将 int 列表拼入 SQL（所有值经 int() 校验）
     ids_str = ",".join(str(int(pid)) for pid in product_ids)
 
-    # 1) 查询商品品类
     cat_sql = text(f"SELECT id, category FROM products WHERE id IN ({ids_str})")
     cat_rows = (await db.execute(cat_sql)).fetchall()
     cat_map = {r.id: r.category for r in cat_rows}
 
-    # 2) 查询每个商品的 avg_ctr 和 avg_return_rate（从 daily_metrics 聚合）
     metrics_sql = text(f"""
         SELECT iss.product_id,
                SUM(dm.clicks)::float / NULLIF(SUM(dm.impressions), 0) AS avg_ctr,
@@ -351,12 +302,10 @@ async def _compute_cluster_stats(
         for r in metrics_rows
     }
 
-    # 3) 按聚类标签分组
     cluster_pids: dict[int, list[int]] = {}
     for pid, lb in zip(product_ids, labels, strict=False):
         cluster_pids.setdefault(int(lb), []).append(int(pid))
 
-    # 4) 构建聚类统计
     clusters = []
     for lb, pids in sorted(cluster_pids.items()):
         cats = [cat_map.get(pid, "未知") for pid in pids]
@@ -393,25 +342,9 @@ async def run_clustering(
     n_clusters: int | None = None,
 ) -> dict[str, Any]:
     """聚类分析主入口。
-
-    Args:
-        db: 数据库异步会话
-        category: 品类过滤
-        market: 市场过滤
-        algorithm: "kmeans" 或 "hdbscan"
-        n_clusters: K-Means 聚类数（None 时自动肘部法确定）
-
-    Returns:
-        {
-            "clusters": [{"cluster_id": int, "size": int, "avg_ctr": float, ...}, ...],
-            "silhouette_score": float | None,
-            "tsne_coordinates": [{"product_id": int, "x": float, "y": float, "cluster_id": int}, ...],
-            "centroids": [[float, ...], ...],
-            "n_clusters": int,
-            "algorithm": str,
-        }
+    
+    流程：加载 embedding → 聚类（线程池）→ t-SNE → 组装结果。
     """
-    # 1) 从数据库加载 embedding
     product_ids, X = await _fetch_embeddings(db, category, market)
 
     if X.size == 0:
@@ -424,7 +357,6 @@ async def run_clustering(
             "algorithm": algorithm,
         }
 
-    # 2) CPU 密集型聚类计算（放入线程池）
     def _cluster_task():
         if algorithm == "hdbscan":
             return _run_hdbscan(X)
@@ -433,16 +365,12 @@ async def run_clustering(
 
     cluster_result = await asyncio.to_thread(_cluster_task)
 
-    # 3) t-SNE 降维（CPU 密集型）
     tsne_coords = await asyncio.to_thread(_run_tsne, X)
 
-    # 4) 组装结果
     labels = cluster_result["labels"]
 
-    # 5) 计算各簇聚合统计（含 CTR/退货率/品类）
     clusters = await _compute_cluster_stats(db, product_ids, labels)
 
-    # 6) t-SNE 坐标附带 cluster_id（前端散点图按簇着色）
     tsne_list = [
         {
             "product_id": int(pid),

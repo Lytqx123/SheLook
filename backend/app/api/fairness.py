@@ -1,10 +1,4 @@
-"""公平性分析 API —— 肤色分布检测与冷启动策略
-
-端点：
-  GET  /api/fairness/distribution  —— 肤色分布分析（返回 SkinToneItem[]）
-  GET  /api/fairness/report/{market} —— 全市场公平性对比报告（返回 {markets: [...]}）
-  POST /api/fairness/check-scheme/{scheme_id} —— 方案级公平性检查
-"""
+"""公平性分析 API —— 肤色分布 + 冷启动策略"""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,12 +27,7 @@ async def get_distribution(
     category: str | None = Query(None, description="品类过滤"),
     db: AsyncSession = Depends(get_db),
 ):
-    """查询已生成图片的肤色分布。
-
-    返回 SkinToneItem[] 格式：[{label, count, percentage}, ...]
-    使用 CLIP Zero-shot 按肤色标签进行分类并与目标市场
-    的人口统计预期进行对比。偏差 >30% 将触发公平性告警。
-    """
+    """查已生成图片的肤色分布，跟目标市场人口预期做对比"""
     if market and market not in VALID_MARKETS:
         raise HTTPException(
             status_code=422,
@@ -66,12 +55,7 @@ async def get_report(
     market: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """生成全市场公平性对比报告。
-
-    返回 {markets: FairnessMarketDemographic[]} 格式，包含所有市场的
-    预期分布、实际分布和偏差数据，供前端柱状图对比展示。
-    每张图片仅 CLIP 分类一次，按 market_variant 分组统计。
-    """
+    """全市场公平性对比报告，前端柱状图用"""
     if market not in VALID_MARKETS:
         raise HTTPException(
             status_code=422,
@@ -88,11 +72,7 @@ async def check_scheme(
     scheme_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """检查指定方案是否符合公平性约束。
-
-    获取方案所在市场的肤色分布并根据公平性阈值给出
-    通过/未通过的判定与建议。
-    """
+    """检查指定方案有没有过公平性阈值"""
     result = await check_fairness_for_scheme(db, scheme_id=scheme_id)
     if result.get("market") is None and "不存在" in result.get("details", ""):
         raise HTTPException(status_code=404, detail=result["details"])

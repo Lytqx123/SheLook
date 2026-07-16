@@ -1,4 +1,4 @@
-"""运营看板 API —— 汇总指标 / CTR 趋势 / 市场对比 / 风格洞察"""
+"""运营看板 API —— 总览 / CTR 趋势 / 市场对比 / 风格洞察"""
 
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import func, select
@@ -16,8 +16,8 @@ router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
 def _build_filtered_query(market: str | None, category: str | None):
     """构建带 market/category 筛选的 GeneratedImage 基础查询
 
-    筛选链：GeneratedImage.market_variant = market
-            + JOIN ImageScheme → Product.category = category
+    market 直接滤 GeneratedImage.market_variant，
+    category 需要 JOIN ImageScheme → Product。
     """
     query = select(GeneratedImage)
     if market:
@@ -36,8 +36,7 @@ async def get_summary(
     market: str | None = None,
     category: str | None = None,
 ):
-    """运营总览 —— 累计指标（支持 market/category 筛选）"""
-    # 带筛选的图片计数
+    """运营总览 —— 累计指标，可筛 market / category"""
     base_query = _build_filtered_query(market, category)
     total_images = (await db.execute(
         select(func.count()).select_from(base_query.subquery())
@@ -50,7 +49,7 @@ async def get_summary(
         select(func.count()).select_from(approved_query.subquery())
     )).scalar() or 0
 
-    # 待人工审核数（用于 manual_review_rate）
+    # 待审数（给 manual_review_rate 用）
     manual_pending_query = _build_filtered_query(market, category).where(
         GeneratedImage.review_status == ReviewStatus.MANUAL_PENDING
     )
@@ -58,7 +57,7 @@ async def get_summary(
         select(func.count()).select_from(manual_pending_query.subquery())
     )).scalar() or 0
 
-    # 聚合每日指标（带 market 筛选；category 筛选需 JOIN）
+    # 聚合每日指标
     metrics_query = select(
         func.sum(DailyMetric.impressions),
         func.sum(DailyMetric.clicks),
@@ -89,7 +88,7 @@ async def get_summary(
     avg_return_rate = round(float(row[3] or 0), 4)
     total_revenue = round(float(row[4] or 0), 2)
 
-    # 这是相对“配置基线”的偏差，不冒充 A/B 实验 lift。
+    # 跟配置基线的偏差，不是 A/B 实验 lift，别搞混
     from app.config import settings
 
     ctr_vs_baseline = (
@@ -98,12 +97,11 @@ async def get_summary(
         else None
     )
 
-    # 预测命中精度：有正样本标注的比例（简化统计）
+    # 高 CTR 预测命中率（简化：predicted_ctr > 0.05 算高）
     high_ctr_prediction_share = None
     try:
         hit_total = (await db.execute(select(func.count()).select_from(PredictionRecord))).scalar() or 0
         if hit_total > 0:
-            # 高 CTR 预测中实际表现也高的比例（简化：predicted_ctr > 0.05 视为高预测）
             hit_correct = (await db.execute(
                 select(func.count()).select_from(PredictionRecord).where(
                     PredictionRecord.predicted_ctr > 0.05
@@ -138,10 +136,7 @@ async def get_ctr_trend(
     db: AsyncSession = Depends(get_db),
     days: int = Query(30, ge=1, le=365),
 ):
-    """CTR 趋势 —— 最近 N 天的每日 CTR 曲线
-
-    真实数据来源：daily_metrics 表。
-    """
+    """最近 N 天的每日 CTR 曲线"""
     from datetime import date, timedelta
     today = date.today()
     start = today - timedelta(days=days)
@@ -172,10 +167,7 @@ async def get_market_comparison(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    """市场维度的 CTR / CVR 对比
-
-    JOIN daily_metrics 聚合各市场的真实 CTR/CVR。
-    """
+    """市场维度的 CTR / CVR 对比"""
     result = await db.execute(
         select(
             GeneratedImage.market_variant,
@@ -214,9 +206,9 @@ async def get_style_insight(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    """风格趋势洞察 —— 当前热门风格标签分布
+    """风格标签分布 —— 从 image_schemes.style_tags 聚合 Top 20
 
-    真实数据来源：image_schemes.style_tags -> JSON 聚合。
+    TODO: 后续优化这里，现在只是简单采样 200 条，数据量大了会不准
     """
     from app.models.image import ImageScheme
     result = await db.execute(

@@ -9,10 +9,7 @@ from app.db.base import Base
 
 
 class BrandStandard(Base):
-    """品牌视觉规范库 —— 约束 AIGC 生成的色彩/构图/水印等
-
-    用于 L1 合规层 check_brand_compliance，确保生成图符合品牌调性。
-    """
+    """品牌视觉规范库 —— 约束 AIGC 生成的色彩/构图/水印等"""
 
     __tablename__ = "brand_standards"
 

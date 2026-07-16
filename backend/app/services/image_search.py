@@ -1,17 +1,7 @@
-"""以图搜图服务 —— 反向图片检索 + 混合搜索
+"""
+以图搜图服务 —— CLIP 向量 + pgvector HNSW 检索。
 
-利用已有 CLIP embedding + pgvector HNSW 索引，
-上传一张图片，返回视觉上最相似的商品方案。
-
-架构：
-  1. 用户上传图片 → CLIP 编码为 512 维向量
-  2. pgvector HNSW 余弦距离检索 top_k 相似商品
-  3. JOIN 方案表，按相似度排序返回
-  4. 可选：结合文本标签进行混合检索（向量 0.7 + 文本 0.3）
-
-2026 行业标准：
-  - 纯向量检索 p95 ~120ms（Supabase + pgvector HNSW）
-  - 混合检索（向量+BM25）召回率提升 15-20%
+上传一张图片，返回视觉最相似的 top_k 商品方案。
 """
 
 import asyncio
@@ -36,22 +26,7 @@ async def search_by_image(
 ) -> list[dict[str, Any]]:
     """以图搜图主入口
 
-    Args:
-        db: 数据库会话
-        image_data: 上传图片的原始字节
-        top_k: 返回结果数
-        category_filter: 品类过滤（如 "electronics"）
-        market_filter: 市场过滤（如 "cn", "us"）
-
-    Returns:
-        [{
-            "product_id": int,
-            "similarity": float (0-1),
-            "title": str,
-            "category": str,
-            "image_url": str,
-            "schemes": [...],
-        }, ...]
+    流程：CLIP 编码 → pgvector HNSW 余弦检索 → JOIN 方案表 → 按相似度排序。
     """
     from app.services.embedding_service import get_clip_embedding
 
@@ -63,7 +38,6 @@ async def search_by_image(
     dim = settings.VECTOR_DIMENSION
     safe_vec = "[" + ",".join(repr(float(v)) for v in query_embedding) + "]"
 
-    # 基础 SQL（注意：target_markets 是 JSON 字段，market 过滤改用 JSON 包含查询）
     base_sql = f"""
         SELECT pe.product_id,
                CAST(pe.embedding AS vector({dim})) <=> CAST('{safe_vec}' AS vector({dim})) AS distance,
@@ -104,7 +78,6 @@ async def search_by_image(
     )
     all_schemes = schemes_result.scalars().all()
 
-    # 按 product_id 分组
     schemes_by_product: dict[int, list] = {}
     for s in all_schemes:
         pid = s.product_id
