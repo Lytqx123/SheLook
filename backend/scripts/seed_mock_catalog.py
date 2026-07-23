@@ -3,7 +3,7 @@
 The script never calls external commerce or AI providers.  It uploads the
 workspace's ``mock图片`` assets to the development MinIO bucket and creates
 traceable synthetic catalog, prediction, daily metric, performance-fact and
-mature-feedback records from 1 June of the current year through today.
+mature-feedback records from 1 May of the current year through today.
 
 It is intentionally a one-time, idempotent development seed: if this catalog
 has already been inserted, it exits without writing duplicate business data.
@@ -187,9 +187,9 @@ async def seed_mock_catalog(asset_root: Path) -> dict[str, int | str]:
     _ensure_safe_environment()
     assets = _assets(asset_root)
     today = date.today()
-    start_day = date(today.year, 6, 1)
+    start_day = date(today.year, 5, 1)
     if today < start_day:
-        raise SystemExit("The mock timeline requires a date on or after 1 June of the current year.")
+        raise SystemExit("The mock timeline requires a date on or after 1 May of the current year.")
     metric_days = [start_day + timedelta(days=offset) for offset in range((today - start_day).days + 1)]
     mature_cutoff = today - timedelta(days=2)
     counts: Counter[str] = Counter()
