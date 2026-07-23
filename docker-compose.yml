@@ -169,6 +169,10 @@ x-backend-image: &backend-image
   build:
     context: ./backend
     dockerfile: Dockerfile
+    args:
+      APT_MIRROR: ${APT_MIRROR:-deb.debian.org}
+      UV_IMAGE: ${UV_IMAGE:-ghcr.io/astral-sh/uv:0.5.11}
+      UV_DEFAULT_INDEX: ${UV_DEFAULT_INDEX:-}
 
 x-frontend-image: &frontend-image
   image: ${FRONTEND_IMAGE:-shelook-frontend:local}

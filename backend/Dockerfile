@@ -2,7 +2,12 @@
 # SheLook FastAPI 后端
 # Python 3.13 + Uvicorn + uv 包管理
 # ============================================================
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.5.11
 FROM python:3.13-slim-bookworm
+
+ARG APT_MIRROR=deb.debian.org
+ARG UV_IMAGE
+ARG UV_DEFAULT_INDEX=
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -14,7 +19,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR $APP_HOME
 
 # 系统依赖（psycopg2、Pillow C 扩展及运维探针）
-RUN apt-get update \
+RUN sed -i "s#deb.debian.org#${APT_MIRROR}#g" /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
         libpq-dev \
@@ -26,7 +32,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # API、Celery Worker/Beat 与 Flower 共用同一 uv 版本和依赖镜像。
-COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /usr/local/bin/uv
+COPY --from=${UV_IMAGE} /uv /usr/local/bin/uv
 
 # pyproject.toml 声明依赖，uv.lock 锁定完整解析结果。
 # 只同步第三方依赖以复用 Docker 缓存；运行时直接从 /app 导入项目源码。
@@ -38,7 +44,9 @@ RUN set -eu; \
     IFS=','; \
     for extra in $PYTHON_EXTRAS; do extra_args="$extra_args --extra $extra"; done; \
     IFS="$old_ifs"; \
-    uv sync --locked --no-install-project --no-dev $extra_args
+    sync_args="--locked"; \
+    if [ -n "$UV_DEFAULT_INDEX" ]; then sync_args=""; export UV_DEFAULT_INDEX; fi; \
+    uv sync $sync_args --no-install-project --no-dev $extra_args
 
 COPY . .
 
