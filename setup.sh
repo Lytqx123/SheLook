@@ -325,6 +325,10 @@ BUILD_SERVICES=(
     flower
     frontend
 )
+# In development, the API, migration and Celery services share the same backend
+# image. Building every service concurrently causes BuildKit to race while
+# exporting that image tag, so build each distinct image exactly once.
+DEV_BUILD_SERVICES=(backend frontend)
 CORE_SERVICES=(postgres redis minio)
 CRITICAL_APPLICATION_SERVICES=(
     backend
@@ -345,8 +349,8 @@ prepare_images() {
     if [[ "$ENV_CHOICE" == "dev" ]]; then
         local build_args=(build --build-arg BUILDKIT_INLINE_CACHE=1)
         "$NO_CACHE" && build_args+=(--no-cache)
-        build_args+=("${BUILD_SERVICES[@]}")
-        step "构建开发镜像（API、迁移、全部 Worker 与前端）"
+        build_args+=("${DEV_BUILD_SERVICES[@]}")
+        step "构建开发镜像（后端与前端）"
         compose "${build_args[@]}"
         return
     fi
