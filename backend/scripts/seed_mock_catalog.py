@@ -447,7 +447,7 @@ async def seed_mock_catalog(asset_root: Path) -> dict[str, int | str]:
                 campaign = VisualOperationCampaign(
                     tenant_id=settings.DEFAULT_TENANT_ID,
                     product_id=product.id,
-                    name=f"{category} 2026 年 6–7 月 Mock CTR 运营活动",
+                    name=f"{category} 2026 年 5 月至今 Mock CTR 运营活动",
                     market=image.market_variant,
                     objective="验证本地 Mock 素材的预测 CTR、真实 CTR 与反馈标签闭环。",
                     objective_metric="ctr",
@@ -469,7 +469,7 @@ async def seed_mock_catalog(asset_root: Path) -> dict[str, int | str]:
                         tenant_id=settings.DEFAULT_TENANT_ID,
                         campaign_id=campaign.id,
                         insight_type="learning",
-                        title=f"{category} Mock CTR 数据已覆盖 6 月至当前日期",
+                        title=f"{category} Mock CTR 数据已覆盖 5 月至当前日期",
                         summary="该结论由开发环境本地素材和确定性模拟曝光/点击生成，仅用于功能验证。",
                         source_type="mock_seed",
                         source_id=SEED_MARKER,
