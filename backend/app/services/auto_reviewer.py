@@ -5,8 +5,11 @@ SIGIR 2025 研究显示 MLLM 与人工评审相关性可达 0.85+ Spearman。
 
 import json
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.config import settings
 from app.core.logging import logger
+from app.services.provider_config_service import resolve_provider_runtime_config
 
 # 审核维度定义（跟 L2/L3 对齐）
 REVIEW_DIMENSIONS = {
@@ -50,21 +53,27 @@ async def auto_review_image(
     image_url: str,
     product_category: str = "",
     product_title: str = "",
+    *,
+    db: AsyncSession | None = None,
+    tenant_id: str | None = None,
 ) -> dict:
     """用 Gemini Flash 审核图片质量，返回评分 + 诊断 + 建议。"""
-    api_key = settings.GEMINI_API_KEY
-    if not api_key:
+    provider_config = (
+        await resolve_provider_runtime_config(db, "gemini", tenant_id) if db is not None else None
+    )
+    if provider_config is None:
         if settings.APP_ENV == "production":
-            raise RuntimeError("GEMINI_API_KEY 未配置，生产环境拒绝伪造 AI 审核结果")
-        logger.warning("GEMINI_API_KEY 未配置，开发环境使用启发式审核")
+            raise RuntimeError("Gemini 未在外部 API 配置中心启用，生产环境拒绝伪造 AI 审核结果")
+        logger.warning("Gemini 未在外部 API 配置中心启用，开发环境使用启发式审核")
         return _mock_auto_review(image_url)
 
     try:
         from google import genai
         from google.genai import types
 
-        http_options = types.HttpOptions(base_url=settings.GEMINI_BASE_URL) if settings.GEMINI_BASE_URL else None
-        client = genai.Client(api_key=api_key, http_options=http_options)
+        base_url = provider_config.config.get("api_base_url")
+        http_options = types.HttpOptions(base_url=base_url) if base_url else None
+        client = genai.Client(api_key=provider_config.credentials["api_key"], http_options=http_options)
 
         context = ""
         if product_category:
@@ -177,7 +186,7 @@ Return ONLY a JSON object (no markdown, no explanation):
 
 def _mock_auto_review(image_url: str = "") -> dict:
     """Gemini 不可用时降级为启发式评分。
-    
+
     根据图片分辨率/文件大小/宽高比算一个启发式分数，
     让不同图片得分不同而不是固定值。
     先这样，后面有更好的降级方案再改。

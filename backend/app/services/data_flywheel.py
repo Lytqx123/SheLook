@@ -4,23 +4,20 @@
 """
 
 import ast
-import hashlib
 import json
 from datetime import date, timedelta
 from typing import Any
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import logger
 from app.models import (
-    DailyMetric,
     GeneratedImage,
     ImageScheme,
-    PredictionRecord,
+    ModelFeedbackLabel,
     Product,
     ProductEmbedding,
-    ReturnRiskLevel,
 )
 
 # 自动标注分位阈值
@@ -36,7 +33,7 @@ async def aggregate_performance_data(
     days: int = 30,
 ) -> list[dict[str, Any]]:
     """数据回流：聚合每张图片在指定窗口内的累计表现。
-    
+
     TODO: 关联 product_embeddings 的 CLIP 向量解析用了 ast.literal_eval，
     性能不好，量大了要改成批量 numpy 反序列化。
     """
@@ -44,19 +41,22 @@ async def aggregate_performance_data(
 
     stmt = (
         select(
-            DailyMetric.image_id,
-            func.sum(DailyMetric.impressions).label("total_impressions"),
-            func.sum(DailyMetric.clicks).label("total_clicks"),
+            ModelFeedbackLabel.image_id,
+            func.sum(ModelFeedbackLabel.impressions).label("total_impressions"),
+            func.sum(ModelFeedbackLabel.clicks).label("total_clicks"),
             (
-                func.sum(DailyMetric.clicks)
-                / func.nullif(func.sum(DailyMetric.impressions), 0)
+                func.sum(ModelFeedbackLabel.clicks)
+                / func.nullif(func.sum(ModelFeedbackLabel.impressions), 0)
             ).label("avg_ctr"),
-            func.avg(DailyMetric.cvr).label("avg_cvr"),
-            func.avg(DailyMetric.return_rate).label("avg_return_rate"),
-            func.sum(DailyMetric.revenue).label("total_revenue"),
+            literal(0.0).label("avg_cvr"),
+            literal(0.0).label("avg_return_rate"),
+            literal(0.0).label("total_revenue"),
         )
-        .where(DailyMetric.date >= cutoff_date)
-        .group_by(DailyMetric.image_id)
+        .where(
+            ModelFeedbackLabel.status == "mature",
+            ModelFeedbackLabel.observation_end >= cutoff_date,
+        )
+        .group_by(ModelFeedbackLabel.image_id)
     )
 
     rows = (await db.execute(stmt)).all()
@@ -99,13 +99,13 @@ async def aggregate_performance_data(
             if not er.embedding:
                 continue
             try:
-                vec = ast.literal_eval(er.embedding)
+                vec = json.loads(er.embedding)
                 embedding_map[er.product_id] = [float(v) for v in vec]
-            except (ValueError, SyntaxError):
+            except (ValueError, TypeError):
                 try:
-                    vec = json.loads(er.embedding)
+                    vec = ast.literal_eval(er.embedding)
                     embedding_map[er.product_id] = [float(v) for v in vec]
-                except (ValueError, TypeError):
+                except (ValueError, SyntaxError, TypeError):
                     logger.warning("embedding 解析失败", product_id=er.product_id)
 
     results = []
@@ -151,11 +151,7 @@ async def auto_label_samples(
     performance_data: list[dict[str, Any]] | None = None,
     days: int = 30,
 ) -> dict[str, Any]:
-    """自动标注正/负样本：CTR > P75 正样本，< P25 负样本，退货率 > 10% 负样本。
-    
-    标注结果写入 prediction_records 表。
-    advisory lock 防并发，DELETE + INSERT 竞态还没完全解决，先加锁凑合。
-    """
+    """Build training targets from immutable feedback labels without rewriting predictions."""
     if performance_data is None:
         performance_data = await aggregate_performance_data(db, days)
 
@@ -179,82 +175,32 @@ async def auto_label_samples(
     positive = 0
     negative = 0
     neutral = 0
-    high_return = 0
-
     training_X = []
     training_y_ctr = []
     training_y_hit = []
     training_y_return = []
 
-    image_ids = [d["image_id"] for d in performance_data]
-
-    lock_digest = hashlib.sha256(
-        ",".join(str(image_id) for image_id in sorted(image_ids)).encode("ascii")
-    ).digest()
-    lock_key = int.from_bytes(lock_digest[:4], byteorder="big") & 0x7FFFFFFF
-    lock_result = await db.execute(
-        select(func.pg_try_advisory_xact_lock(lock_key))
-    )
-    if not lock_result.scalar():
-        logger.warning("标注锁冲突，跳过本批次", image_count=len(image_ids))
-        return {
-            "total_samples": len(performance_data),
-            "positive_samples": 0,
-            "negative_samples": 0,
-            "neutral_samples": len(performance_data),
-            "note": "并发标注冲突，请稍后重试",
-        }
-
-    await db.execute(
-        PredictionRecord.__table__.delete().where(
-            and_(
-                PredictionRecord.image_id.in_(image_ids),
-                PredictionRecord.ctr_confidence_interval["source"].as_string() == "actual",
-            )
-        )
-    )
-
     for data in performance_data:
         ctr = data["avg_ctr"]
-        return_rate = data["avg_return_rate"]
 
         is_positive = ctr >= ctr_p75
         is_negative = ctr <= ctr_p25
-        is_high_return = return_rate > HIGH_RETURN_THRESHOLD
 
         if is_positive:
             label = 1
             positive += 1
-        elif is_negative or is_high_return:
+        elif is_negative:
             label = 0
             negative += 1
         else:
             label = 0
             neutral += 1
 
-        if is_high_return:
-            high_return += 1
-
-        risk_level = ReturnRiskLevel.HIGH if is_high_return else (
-            ReturnRiskLevel.LOW if is_positive else ReturnRiskLevel.MEDIUM
-        )
-
-        record = PredictionRecord(
-            image_id=data["image_id"],
-            predicted_ctr=ctr,
-            ctr_confidence_interval={"source": "actual", "p25": ctr_p25, "p75": ctr_p75},
-            predicted_hit_probability=float(label),
-            return_risk_level=risk_level,
-        )
-        db.add(record)
-
         features = _build_training_features(data, data.get("clip_embedding"))
         training_X.append(features)
         training_y_ctr.append(ctr)
         training_y_hit.append(float(label))
-        training_y_return.append(1 if return_rate > 0.08 else 0)
-
-    await db.commit()
+        training_y_return.append(0)
 
     logger.info(
         "自动标注完成",
@@ -262,7 +208,6 @@ async def auto_label_samples(
         positive=positive,
         negative=negative,
         neutral=neutral,
-        high_return=high_return,
         ctr_p25=ctr_p25,
         ctr_p75=ctr_p75,
     )
@@ -272,7 +217,6 @@ async def auto_label_samples(
         "positive_samples": positive,
         "negative_samples": negative,
         "neutral_samples": neutral,
-        "high_return_samples": high_return,
         "ctr_p75": round(ctr_p75, 4),
         "ctr_p25": round(ctr_p25, 4),
         "training_data": {
@@ -315,6 +259,7 @@ def _build_training_features(
 async def trigger_model_retraining(
     db: AsyncSession,
     days: int = 30,
+    tenant_id: str | None = None,
 ) -> dict[str, Any]:
     """模型迭代：聚合数据 → 标注 → 训练预测器 → 保存新版本。"""
     label_result = await auto_label_samples(db, days=days)
@@ -354,7 +299,7 @@ async def trigger_model_retraining(
     def _train_sync():
         from app.services.predictor import CTRPredictor
 
-        predictor = CTRPredictor()
+        predictor = CTRPredictor.for_tenant(tenant_id) if tenant_id else CTRPredictor()
         X_arr = np.array(X)
         y_ctr_arr = np.array(y_ctr)
         y_hit_arr = np.array(y_hit)

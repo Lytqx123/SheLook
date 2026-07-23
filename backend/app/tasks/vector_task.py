@@ -3,6 +3,8 @@
 import asyncio
 
 from app.core.logging import logger
+from app.core.tenant import tenant_context
+from app.tasks.async_utils import run_async_task
 from app.tasks.celery_app import app
 
 
@@ -13,7 +15,7 @@ from app.tasks.celery_app import app
     retry_backoff=True,
     retry_kwargs={"max_retries": 5},
 )
-def index_product_embedding(self, product_id: int) -> dict:
+def index_product_embedding(self, product_id: int, tenant_id: str = "default") -> dict:
     from sqlalchemy import select
 
     from app.db.session import async_session_factory
@@ -37,4 +39,5 @@ def index_product_embedding(self, product_id: int) -> dict:
             logger.info("商品向量索引已更新", product_id=product_id)
             return {"status": "indexed", "product_id": product_id}
 
-    return asyncio.run(_run())
+    with tenant_context(tenant_id, source="celery"):
+        return run_async_task(_run())

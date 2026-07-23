@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Card, Button, Row, Col, Tag,
   Descriptions, App, Spin,
-  Table, Popconfirm,
+  Table, Popconfirm, Empty, Modal, Form, Input, InputNumber,
 } from "antd";
 import {
   SyncOutlined, RocketOutlined, DatabaseOutlined,
@@ -13,7 +14,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import {
   useTriggerFlywheelSync, useTriggerFlywheelRetrain,
-  useModelVersions, useRollbackModel,
+  useCampaign, useCreateCampaignInsight, useModelVersions, useRollbackModel, useUpdateCampaign,
 } from "@/hooks";
 import PageHeader from "@/components/PageHeader";
 import type {
@@ -22,6 +23,8 @@ import type {
 } from "@/types";
 
 export default function FlywheelContent() {
+  const searchParams = useSearchParams();
+  const campaignId = searchParams.get("campaignId");
   const [syncResult, setSyncResult] = useState<FlywheelSyncResponse | null>(null);
   const [retrainResult, setRetrainResult] = useState<FlywheelRetrainResponse | null>(null);
 
@@ -29,6 +32,11 @@ export default function FlywheelContent() {
   const retrainMutation = useTriggerFlywheelRetrain();
   const modelVersionsQuery = useModelVersions();
   const rollbackMutation = useRollbackModel();
+  const campaignQuery = useCampaign(campaignId ?? "");
+  const createInsight = useCreateCampaignInsight();
+  const updateCampaign = useUpdateCampaign();
+  const [insightOpen, setInsightOpen] = useState(false);
+  const [insightForm] = Form.useForm<{ title: string; summary: string; confidence?: number }>();
   const { message } = App.useApp();
 
   const handleRollback = async (targetDate: string) => {
@@ -112,6 +120,29 @@ export default function FlywheelContent() {
     try {
       const res = await syncMutation.mutateAsync();
       setSyncResult(res);
+      if (campaignId) {
+        try {
+          await createInsight.mutateAsync({
+            campaignId,
+            body: {
+              insight_type: "learning",
+              title: "经营数据已回流并完成样本标注",
+              summary: `本次回流纳入 ${res.total_samples ?? 0} 条素材表现，形成 ${res.positive_samples ?? 0} 条正向与 ${res.negative_samples ?? 0} 条负向学习样本。`,
+              confidence: res.total_samples ? Math.min(0.9, Math.max(0.35, res.total_samples / 200)) : 0.35,
+              evidence: {
+                total_samples: res.total_samples,
+                positive_samples: res.positive_samples,
+                negative_samples: res.negative_samples,
+                ctr_p75: res.ctr_p75,
+                ctr_p25: res.ctr_p25,
+              },
+            },
+          });
+          await updateCampaign.mutateAsync({ campaignId, body: { current_stage: "learning", status: "learning", next_step: "查看本次验证的策略，并用于下一次视觉方案选择。" } });
+        } catch {
+          message.warning("数据已回流，活动学习记录将在后台同步。");
+        }
+      }
       message.success({ content: "数据回流完成", key: "sync" });
     } catch {
       message.error({ content: "数据回流失败", key: "sync" });
@@ -123,6 +154,22 @@ export default function FlywheelContent() {
     try {
       const res = await retrainMutation.mutateAsync();
       setRetrainResult(res);
+      if (campaignId && res.status === "success") {
+        try {
+          await createInsight.mutateAsync({
+            campaignId,
+            body: {
+              insight_type: "recommendation_update",
+              title: "模型已基于最新经营反馈完成迭代",
+              summary: `本轮训练使用 ${res.samples ?? 0} 条样本；后续推荐会参考本次活动及同类活动的真实表现。`,
+              confidence: res.hit_rate ?? undefined,
+              evidence: { samples: res.samples, positive_samples: res.positive_samples, negative_samples: res.negative_samples, hit_rate: res.hit_rate },
+            },
+          });
+        } catch {
+          message.warning("模型已更新，活动策略记录将在后台同步。");
+        }
+      }
       message.success({ content: "模型重训练完成", key: "retrain" });
     } catch {
       message.error({ content: "模型训练失败", key: "retrain" });
@@ -133,8 +180,30 @@ export default function FlywheelContent() {
     <div className="space-y-6" style={{ maxWidth: 1280, margin: "0 auto" }}>
       <PageHeader
         title="数据飞轮"
-        subtitle="数据回流 → 自动标注 → 模型迭代，驱动效果持续进化"
+        subtitle={campaignId ? "将本次活动的真实结果沉淀为可复用策略，并反馈给下一次视觉决策。" : "数据回流 → 自动标注 → 模型迭代，驱动效果持续进化"}
       />
+
+      {campaignId && (
+        <Card
+          className="office-flywheel-learning"
+          title={campaignQuery.data?.campaign ? `活动复盘：${campaignQuery.data.campaign.name}` : "活动复盘"}
+          extra={<Button type="primary" onClick={() => setInsightOpen(true)}>记录人工结论</Button>}
+        >
+          <p className="text-sm text-slate-500 mb-4">这里不是运行日志，而是团队下一次可以直接复用的经营判断：哪些策略被验证、哪些风险需要规避、模型因此学到了什么。</p>
+          {campaignQuery.isLoading ? <Spin /> : campaignQuery.data?.insights?.length ? (
+            <div className="office-flywheel-learning__items">
+              {campaignQuery.data.insights.map((insight) => (
+                <article key={insight.id} className="office-flywheel-learning__item">
+                  <Tag color={insight.insight_type === "strategy_rejected" ? "red" : insight.insight_type === "recommendation_update" ? "blue" : "green"}>{insight.insight_type === "strategy_rejected" ? "待规避" : insight.insight_type === "recommendation_update" ? "已反馈模型" : "已验证"}</Tag>
+                  <strong>{insight.title}</strong>
+                  <p>{insight.summary}</p>
+                  {insight.confidence != null && <span>证据置信度：{Math.round(insight.confidence * 100)}%</span>}
+                </article>
+              ))}
+            </div>
+          ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚无活动复盘结论。完成数据回流、模型迭代或手动记录后，会在这里形成可复用策略。" />}
+        </Card>
+      )}
 
       {/* 飞轮流程图 */}
       <Card>
@@ -398,6 +467,40 @@ export default function FlywheelContent() {
           }
         />
       </Card>
+
+      <Modal
+        title="记录可复用的活动结论"
+        open={insightOpen}
+        okText="沉淀为策略"
+        cancelText="取消"
+        confirmLoading={createInsight.isPending}
+        onCancel={() => setInsightOpen(false)}
+        onOk={() => insightForm.submit()}
+      >
+        <p className="text-sm text-slate-500 mb-4">记录的是下一次能帮助团队做得更好的结论，而不是单次操作备注。</p>
+        <Form
+          form={insightForm}
+          layout="vertical"
+          onFinish={async (values) => {
+            if (!campaignId) return;
+            try {
+              await createInsight.mutateAsync({
+                campaignId,
+                body: { insight_type: "learning", title: values.title, summary: values.summary, confidence: values.confidence },
+              });
+              insightForm.resetFields();
+              setInsightOpen(false);
+              message.success("活动结论已沉淀，后续推荐与复盘可引用。 ");
+            } catch (error) {
+              message.error(error instanceof Error ? error.message : "保存结论失败");
+            }
+          }}
+        >
+          <Form.Item name="title" label="结论标题" rules={[{ required: true, message: "请输入结论标题" }]}><Input placeholder="例如：美国市场更偏好生活化光影首图" maxLength={120} /></Form.Item>
+          <Form.Item name="summary" label="证据与适用边界" rules={[{ required: true, message: "说明结论依据与适用范围" }]}><Input.TextArea rows={4} placeholder="例如：在本次 A/B 实验中 CTR 更高，但仅适用于夏季连衣裙与 25–34 岁人群。" maxLength={600} showCount /></Form.Item>
+          <Form.Item name="confidence" label="证据置信度（0–1，可选）"><InputNumber min={0} max={1} step={0.05} style={{ width: "100%" }} placeholder="例如：0.75" /></Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 }

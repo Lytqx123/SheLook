@@ -5,6 +5,8 @@ import asyncio
 from celery import shared_task
 
 from app.core.logging import logger
+from app.core.tenant import tenant_context
+from app.tasks.async_utils import run_async_task
 
 
 @shared_task(
@@ -17,6 +19,7 @@ def evaluate_image_quality(
     self,
     image_id: int,
     image_url: str,
+    tenant_id: str = "default",
 ) -> dict:
     """L1→L2→L3 三级质检流水线"""
     from sqlalchemy import select
@@ -59,4 +62,5 @@ def evaluate_image_quality(
 
             return {"status": "skipped", "detail": "无质量结果"}
 
-    return asyncio.run(_evaluate())
+    with tenant_context(tenant_id, source="celery"):
+        return run_async_task(_evaluate())

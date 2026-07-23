@@ -9,6 +9,8 @@ from celery import shared_task
 from celery.exceptions import Retry
 
 from app.core.logging import logger
+from app.core.tenant import tenant_context
+from app.tasks.async_utils import run_async_task
 
 
 @shared_task(
@@ -24,6 +26,8 @@ def generate_single_image(
     market_variant: str | None = None,
     generation_params: dict | None = None,
     request_id: str | None = None,
+    tenant_id: str = "default",
+    workflow_task_id: str | None = None,
 ) -> dict:
     """异步生图 + 质量评估 + C2PA manifest + 审计日志"""
     from sqlalchemy import select
@@ -45,7 +49,24 @@ def generate_single_image(
             if image:
                 image.generation_status = "failed"
                 image.error_message = str(error)[:1000]
-                await db.commit()
+            if workflow_task_id:
+                from app.models.workflow import WorkflowTask
+                from app.services.workflow_service import mark_task_failed
+
+                workflow_task = await db.scalar(
+                    select(WorkflowTask).where(WorkflowTask.id == workflow_task_id)
+                )
+                if workflow_task and workflow_task.status != "cancelled":
+                    mark_task_failed(workflow_task, error)
+                from app.models.release_control import AIUsageRecord, UsageStatus
+
+                usage = await db.scalar(
+                    select(AIUsageRecord).where(AIUsageRecord.workflow_task_id == workflow_task_id)
+                )
+                if usage:
+                    usage.status = UsageStatus.FAILED
+                    usage.actual_cost_cents = usage.reserved_cost_cents
+            await db.commit()
         try:
             from app.services.pubsub import notify_generation_completed
 
@@ -61,6 +82,21 @@ def generate_single_image(
         except Exception as notify_error:
             logger.warning("失败通知发送失败", image_id=image_id, error=str(notify_error))
 
+    async def _persist_retrying(error: Exception) -> None:
+        """将可恢复的失败暴露给任务中心，而不是一直显示为运行中。"""
+        if not workflow_task_id:
+            return
+        async with async_session_factory() as db:
+            from app.models.workflow import WorkflowTask
+            from app.services.workflow_service import mark_task_retrying
+
+            workflow_task = await db.scalar(
+                select(WorkflowTask).where(WorkflowTask.id == workflow_task_id)
+            )
+            if workflow_task and workflow_task.status != "cancelled":
+                mark_task_retrying(workflow_task, error)
+            await db.commit()
+
     async def _run():
         start_time = time.time()
         gen_params = generation_params or {}
@@ -69,6 +105,20 @@ def generate_single_image(
 
         try:
             async with async_session_factory() as db:
+                if workflow_task_id:
+                    from app.models.workflow import WorkflowTask
+
+                    workflow_task = await db.scalar(
+                        select(WorkflowTask).where(WorkflowTask.id == workflow_task_id)
+                    )
+                    if workflow_task and workflow_task.status in {"cancelled", "succeeded", "running"}:
+                        logger.info(
+                            "终态或重复任务跳过执行",
+                            image_id=image_id,
+                            workflow_task_id=workflow_task_id,
+                            workflow_status=workflow_task.status,
+                        )
+                        return {"status": str(workflow_task.status), "image_id": image_id}
                 img_result = await db.execute(
                     select(GeneratedImage).where(GeneratedImage.id == image_id)
                 )
@@ -77,6 +127,15 @@ def generate_single_image(
                     raise RuntimeError(f"生成记录 #{image_id} 不存在")
                 image.generation_status = "processing"
                 image.error_message = None
+                if workflow_task_id:
+                    from app.models.workflow import WorkflowTask
+                    from app.services.workflow_service import mark_task_running
+
+                    workflow_task = await db.scalar(
+                        select(WorkflowTask).where(WorkflowTask.id == workflow_task_id)
+                    )
+                    if workflow_task:
+                        mark_task_running(workflow_task)
                 await db.commit()
 
                 scheme_result = await db.execute(
@@ -109,7 +168,7 @@ def generate_single_image(
                     if product:
                         category = product.category
 
-                service = GenerationService()
+                service = GenerationService(db=db, tenant_id=tenant_id)
                 gen_result = await service.generate(
                     prompt=prompt,
                     negative_prompt="blurry, low quality, distorted, watermark",
@@ -161,6 +220,28 @@ def generate_single_image(
 
                     image.generation_status = "completed"
                     image.error_message = None
+                    if workflow_task_id:
+                        from app.models.workflow import WorkflowTask
+                        from app.services.workflow_service import mark_task_succeeded
+
+                        workflow_task = await db.scalar(
+                            select(WorkflowTask).where(WorkflowTask.id == workflow_task_id)
+                        )
+                        if workflow_task:
+                            mark_task_succeeded(
+                                workflow_task,
+                                {"image_id": image.id, "image_url": image_url, "model": model_name},
+                            )
+                        from app.models.release_control import AIUsageRecord, UsageStatus
+
+                        usage = await db.scalar(
+                            select(AIUsageRecord).where(
+                                AIUsageRecord.workflow_task_id == workflow_task_id
+                            )
+                        )
+                        if usage:
+                            usage.status = UsageStatus.SUCCEEDED
+                            usage.actual_cost_cents = usage.reserved_cost_cents
                     await db.commit()
                     duration_ms = int((time.time() - start_time) * 1000)
 
@@ -245,14 +326,18 @@ def generate_single_image(
             raise
 
     try:
-        return asyncio.run(_run())
+        with tenant_context(tenant_id, source="celery"):
+            return run_async_task(_run())
     except Retry:
         raise
     except Exception as e:
         logger.error("生图任务致命错误", image_id=image_id, error=str(e))
         if self.request.retries >= self.max_retries:
-            asyncio.run(_persist_failure(e))
+            with tenant_context(tenant_id, source="celery"):
+                run_async_task(_persist_failure(e))
             raise
+        with tenant_context(tenant_id, source="celery"):
+            run_async_task(_persist_retrying(e))
         raise self.retry(exc=e) from e
 
 

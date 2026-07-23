@@ -14,9 +14,11 @@ from app.config import settings
 from app.core.auth import UserInfo, require_auth
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.logging import logger
+from app.core.tenant import set_tenant_context
 from app.db.session import get_db
 from app.models.external_listing import ExternalListingMapping
 from app.models.image import GeneratedImage
+from app.models.organization import Tenant
 from app.models.prediction import DailyMetric
 from app.schemas.metrics import (
     ExternalListingMappingCreate,
@@ -50,13 +52,36 @@ async def verify_metrics_api_key(
     return x_api_key or ""
 
 
+async def require_metrics_tenant(
+    x_tenant_id: str | None = Header(None, alias="X-Tenant-ID"),
+    _api_key: str = Depends(verify_metrics_api_key),
+) -> str:
+    """Bind machine-to-machine metric imports to one active tenant before DB access."""
+    from app.db.session import async_session_factory
+
+    tenant_id = x_tenant_id or settings.DEFAULT_TENANT_ID
+    if not x_tenant_id and (settings.APP_ENV == "production" or settings.METRICS_API_KEY):
+        raise HTTPException(status_code=422, detail="生产数据导入必须提供 X-Tenant-ID")
+
+    try:
+        set_tenant_context(tenant_id, source="metrics_integration")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    async with async_session_factory() as lookup_db:
+        tenant = await lookup_db.get(Tenant, tenant_id)
+    if tenant is None or tenant.status != "active":
+        raise HTTPException(status_code=403, detail="目标租户不存在或已停用")
+    return tenant_id
+
+
 # ---- 批量写入 ----
 
 @router.post("/batch", response_model=MetricsBatchResponse)
 async def batch_upsert_metrics(
     body: MetricsBatchRequest,
+    tenant_id: str = Depends(require_metrics_tenant),
     db: AsyncSession = Depends(get_db),
-    api_key: str = Depends(verify_metrics_api_key),
 ):
     """批量 upsert 指标，单次最多 1000 条，幂等写入"""
     items = body.items
@@ -65,10 +90,20 @@ async def batch_upsert_metrics(
     failed = 0
     results: list[MetricsUpsertResult] = []
 
+    image_ids = {item.image_id for item in items}
+    owned_image_ids = set(
+        (await db.execute(select(GeneratedImage.id).where(GeneratedImage.id.in_(image_ids))))
+        .scalars()
+        .all()
+    )
+
     for item in items:
         try:
+            if item.image_id not in owned_image_ids:
+                raise NotFoundError(detail=f"图片 #{item.image_id} 不属于当前租户或不存在")
             async with db.begin_nested():
                 stmt = pg_insert(DailyMetric).values(
+                    tenant_id=tenant_id,
                     image_id=item.image_id,
                     date=item.date,
                     source_platform=item.source_platform,
@@ -169,8 +204,8 @@ async def sync_platform_metrics(
     platform: str,
     date_from: str | None = None,
     date_to: str | None = None,
+    tenant_id: str = Depends(require_metrics_tenant),
     db: AsyncSession = Depends(get_db),
-    api_key: str = Depends(verify_metrics_api_key),
 ):
     """手动触发平台数据同步（shopee / lazada / amazon）
 
@@ -194,7 +229,7 @@ async def sync_platform_metrics(
     date_range_str = f"{d_from.isoformat()} ~ {d_to.isoformat()}"
 
     try:
-        collector = get_collector(platform)
+        collector = await get_collector(platform, db, tenant_id)
         try:
             raw_items = await collector.fetch_daily_metrics((d_from, d_to))
         finally:
@@ -231,6 +266,7 @@ async def sync_platform_metrics(
                     continue
                 mapped = collector.map_to_internal_schema(raw, image_id)
                 stmt = pg_insert(DailyMetric).values(
+                    tenant_id=tenant_id,
                     image_id=mapped.image_id,
                     date=mapped.date,
                     source_platform=mapped.source_platform,
@@ -315,7 +351,10 @@ async def upsert_external_mapping(
         raise HTTPException(status_code=403, detail="仅管理员可维护平台映射")
     if not (await db.execute(select(GeneratedImage.id).where(GeneratedImage.id == body.image_id))).scalar_one_or_none():
         raise NotFoundError(detail=f"图片 #{body.image_id} 不存在")
-    stmt = pg_insert(ExternalListingMapping).values(**body.model_dump()).on_conflict_do_update(
+    stmt = pg_insert(ExternalListingMapping).values(
+        tenant_id=user.tenant_id,
+        **body.model_dump(),
+    ).on_conflict_do_update(
         constraint="uq_external_listing_platform_id",
         set_={"image_id": body.image_id, "updated_at": func.now()},
     ).returning(ExternalListingMapping)

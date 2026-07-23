@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import logger
+from app.core.tenant import get_current_tenant_id
 
 
 def _parse_embedding(raw: str | None) -> list[float] | None:
@@ -22,12 +23,12 @@ def _parse_embedding(raw: str | None) -> list[float] | None:
     if not raw:
         return None
     try:
-        return ast.literal_eval(raw)
-    except (ValueError, SyntaxError):
-        pass
-    try:
         return json.loads(raw)
     except json.JSONDecodeError:
+        pass
+    try:
+        return ast.literal_eval(raw)
+    except (ValueError, SyntaxError):
         pass
     # 最后尝试按空白分割（兜底）
     try:
@@ -39,7 +40,8 @@ def _parse_embedding(raw: str | None) -> list[float] | None:
 
 def _build_filter_clause(category: str | None, market: str | None) -> tuple[str, dict]:
     params: dict[str, Any] = {}
-    conditions = ["p.status = 'published'"]
+    conditions = ["p.status = 'published'", "p.tenant_id = :tenant_id"]
+    params["tenant_id"] = get_current_tenant_id()
 
     if category:
         conditions.append("p.category = :category")
@@ -59,12 +61,15 @@ async def _fetch_embeddings(
 ) -> tuple[list[int], np.ndarray]:
     """从 DB 读过滤后的 embedding，返回 product_ids + (n, 512) 矩阵。"""
     where_clause, params = _build_filter_clause(category, market)
+    params["tenant_id"] = get_current_tenant_id()
 
     sql = f"""
         SELECT pe.product_id, pe.embedding
         FROM product_embeddings pe
         JOIN products p ON p.id = pe.product_id
         WHERE {where_clause}
+          AND pe.tenant_id = :tenant_id
+          AND p.tenant_id = :tenant_id
           AND pe.embedding IS NOT NULL
           AND pe.embedding != ''
     """
@@ -110,7 +115,7 @@ async def _fetch_embeddings(
 
 def _elbow_optimal_k(X: np.ndarray, max_k: int = 10) -> int:
     """肘部法：二阶差分找最优 k。
-    
+
     先这样，样本太少时效果一般，后面可以考虑加点 gap statistic。
     """
     from sklearn.cluster import KMeans
@@ -196,7 +201,7 @@ def _run_kmeans(
 
 def _run_hdbscan(X: np.ndarray) -> dict[str, Any]:
     """HDBSCAN 密度聚类，自动发现簇数。
-    
+
     这段AI写的，min_cluster_size 公式是启发式的，极端数据可能不适用。
     """
     import hdbscan
@@ -274,9 +279,12 @@ async def _compute_cluster_stats(
         return []
 
     ids_str = ",".join(str(int(pid)) for pid in product_ids)
+    tenant_id = get_current_tenant_id()
 
-    cat_sql = text(f"SELECT id, category FROM products WHERE id IN ({ids_str})")
-    cat_rows = (await db.execute(cat_sql)).fetchall()
+    cat_sql = text(
+        f"SELECT id, category FROM products WHERE id IN ({ids_str}) AND tenant_id = :tenant_id"
+    )
+    cat_rows = (await db.execute(cat_sql, {"tenant_id": tenant_id})).fetchall()
     cat_map = {r.id: r.category for r in cat_rows}
 
     metrics_sql = text(f"""
@@ -289,9 +297,12 @@ async def _compute_cluster_stats(
         JOIN generated_images gi ON gi.scheme_id = iss.id
         JOIN daily_metrics dm ON dm.image_id = gi.id
         WHERE iss.product_id IN ({ids_str})
+          AND iss.tenant_id = :tenant_id
+          AND gi.tenant_id = :tenant_id
+          AND dm.tenant_id = :tenant_id
         GROUP BY iss.product_id
     """)
-    metrics_rows = (await db.execute(metrics_sql)).fetchall()
+    metrics_rows = (await db.execute(metrics_sql, {"tenant_id": tenant_id})).fetchall()
     metrics_map = {
         r.product_id: {
             "avg_ctr": float(r.avg_ctr or 0),
@@ -342,7 +353,7 @@ async def run_clustering(
     n_clusters: int | None = None,
 ) -> dict[str, Any]:
     """聚类分析主入口。
-    
+
     流程：加载 embedding → 聚类（线程池）→ t-SNE → 组装结果。
     """
     product_ids, X = await _fetch_embeddings(db, category, market)

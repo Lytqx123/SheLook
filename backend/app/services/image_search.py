@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.core.logging import logger
+from app.core.tenant import get_current_tenant_id
 
 
 async def search_by_image(
@@ -45,6 +46,8 @@ async def search_by_image(
         FROM product_embeddings pe
         JOIN products p ON p.id = pe.product_id
         WHERE p.status = 'published'
+          AND pe.tenant_id = :tenant_id
+          AND p.tenant_id = :tenant_id
     """
 
     if category_filter:
@@ -57,7 +60,7 @@ async def search_by_image(
         LIMIT :top_k
     """
 
-    params: dict = {"top_k": top_k}
+    params: dict = {"top_k": top_k, "tenant_id": get_current_tenant_id()}
     if category_filter:
         params["category"] = category_filter
     if market_filter:

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import JSON, DateTime, Enum, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.base import Base
+from app.db.base import Base, TenantScopedMixin
 
 if TYPE_CHECKING:
     from app.models.product import Product
@@ -21,7 +21,7 @@ class ReviewStatus(StrEnum):
     REJECTED = "rejected"
 
 
-class ImageScheme(Base):
+class ImageScheme(TenantScopedMixin, Base):
     """视觉方案 —— 一款商品可有多套拍摄/生成方案"""
 
     __tablename__ = "image_schemes"
@@ -48,7 +48,7 @@ class ImageScheme(Base):
         return f"<ImageScheme #{self.id} {self.scheme_name}>"
 
 
-class GeneratedImage(Base):
+class GeneratedImage(TenantScopedMixin, Base):
     """生成图片 —— AIGC 产出的实际图片，带质检分数和审核状态"""
 
     __tablename__ = "generated_images"

@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import {
   Card, Form, Input, Select, InputNumber, Button, Tag,
   Descriptions, Alert, Spin, App, Row, Col, Statistic,
 } from "antd";
-import { PlayCircleOutlined } from "@ant-design/icons";
+import { PlayCircleOutlined, SettingOutlined } from "@ant-design/icons";
 import { useGenerateVideo, useVideoProviders } from "@/hooks";
 import { VIDEO_STYLE_OPTIONS, VIDEO_RESOLUTION_OPTIONS } from "@/constants";
 import type { VideoGenerateResponse, VideoProvider } from "@/types";
@@ -66,6 +67,7 @@ export default function VideoGenerateContent() {
       <PageHeader
         title="AI 视频生成"
         subtitle="将商品图片转化为动态展示视频（Kling AI 3.0 / Runway Gen-4.5）"
+        extra={<Link href="/integrations/providers"><Button icon={<SettingOutlined />}>配置视频 API</Button></Link>}
       />
 
       {/* 生成表单 */}
@@ -105,7 +107,7 @@ export default function VideoGenerateContent() {
             <Alert
               type="warning"
               showIcon
-              title="当前未配置可用的视频生成提供商；请先配置 Kling 或 Runway API 凭据。"
+              title="当前未配置可用的视频生成提供商；请先在“配置视频 API”中保存并启用 Kling 或 Runway 凭据。"
               style={{ marginBottom: 16 }}
             />
           )}

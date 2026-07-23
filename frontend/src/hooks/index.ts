@@ -9,6 +9,11 @@ import type {
   VideoGenerateParams, ClusteringRunRequest,
   LoginRequest, TextMatchRequest, VisionRewardRequest,
   MetricsBatchRequest, ModelRollbackRequest,
+  WorkflowTaskStatus,
+  CampaignCreateRequest, CampaignInsightCreateRequest, CampaignUpdateRequest,
+  DianxiaomiConnectionInput,
+  ProviderConfig, ProviderConfigInput,
+  RuntimeSetting,
 } from "@/types";
 
 // 商品
@@ -83,11 +88,255 @@ export function useGenerationStatus(imageId: number, pollInterval = 5000) {
   });
 }
 
+// 企业工作台：任务状态保持短轮询，终态后自动停止，避免无效流量。
+export function useTenantContext() {
+  return useQuery({
+    queryKey: ["tenant-context"],
+    queryFn: api.getTenantContext,
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+}
+
+// 店小秘连接配置：所有变更都会刷新全租户共享的连接视图。
+export function useDianxiaomiConnections() {
+  return useQuery({
+    queryKey: ["dianxiaomi-connections"],
+    queryFn: api.listDianxiaomiConnections,
+    retry: false,
+  });
+}
+
+export function useCreateDianxiaomiConnection() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: DianxiaomiConnectionInput) => api.createDianxiaomiConnection(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["dianxiaomi-connections"] }),
+  });
+}
+
+export function useUpdateDianxiaomiConnection() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Partial<DianxiaomiConnectionInput> }) =>
+      api.updateDianxiaomiConnection(id, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["dianxiaomi-connections"] }),
+  });
+}
+
+export function useValidateDianxiaomiConnection() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.validateDianxiaomiConnection,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["dianxiaomi-connections"] }),
+  });
+}
+
+export function useDianxiaomiSyncRuns(connectionId: string | null) {
+  return useQuery({
+    queryKey: ["dianxiaomi-sync-runs", connectionId],
+    queryFn: () => api.listDianxiaomiSyncRuns(connectionId as string),
+    enabled: Boolean(connectionId),
+    retry: false,
+    refetchInterval: (query) => {
+      const runs = query.state.data;
+      return runs?.some((run) => run.status === "queued" || run.status === "running") ? 5_000 : false;
+    },
+  });
+}
+
+export function useStartDianxiaomiSync() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.startDianxiaomiSync,
+    onSuccess: (_result, connectionId) => {
+      qc.invalidateQueries({ queryKey: ["dianxiaomi-sync-runs", connectionId] });
+      qc.invalidateQueries({ queryKey: ["dianxiaomi-connections"] });
+    },
+  });
+}
+
+export function useDeleteDianxiaomiConnection() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.deleteDianxiaomiConnection,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["dianxiaomi-connections"] }),
+  });
+}
+
+export function useProviderConfigs() {
+  return useQuery({
+    queryKey: ["provider-configs"],
+    queryFn: api.listProviderConfigs,
+    retry: false,
+  });
+}
+
+export function useUpdateProviderConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ provider, body }: { provider: ProviderConfig["provider"]; body: ProviderConfigInput }) =>
+      api.updateProviderConfig(provider, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["provider-configs"] });
+      qc.invalidateQueries({ queryKey: ["video-providers"] });
+    },
+  });
+}
+
+export function useValidateProviderConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.validateProviderConfig,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["provider-configs"] }),
+  });
+}
+
+export function useDeleteProviderConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.deleteProviderConfig,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["provider-configs"] });
+      qc.invalidateQueries({ queryKey: ["video-providers"] });
+    },
+  });
+}
+
+export function useRuntimeSettings() {
+  return useQuery({ queryKey: ["runtime-settings"], queryFn: api.listRuntimeSettings, retry: false });
+}
+
+export function useUpdateRuntimeSetting() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ key, value }: { key: string; value: number }) => api.updateRuntimeSetting(key, value),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["runtime-settings"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
+export function useResetRuntimeSetting() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (key: string) => api.resetRuntimeSetting(key),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["runtime-settings"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
+export function useRuntimeSettingHistory(key: string | null) {
+  return useQuery({
+    queryKey: ["runtime-setting-history", key],
+    queryFn: () => api.getRuntimeSettingHistory(key as string),
+    enabled: Boolean(key),
+    retry: false,
+  });
+}
+
+export function useWorkflowTasks(params?: {
+  status?: WorkflowTaskStatus;
+  taskType?: string;
+  page?: number;
+  pageSize?: number;
+}, enabled = true) {
+  return useQuery({
+    queryKey: ["workflow-tasks", params],
+    queryFn: () => api.getWorkflowTasks({
+      status: params?.status,
+      task_type: params?.taskType,
+      page: params?.page,
+      page_size: params?.pageSize,
+    }),
+    enabled,
+    refetchInterval: (query) =>
+      query.state.data?.items.some((task) =>
+        ["created", "queued", "running", "retrying", "waiting_external"].includes(task.status),
+      )
+        ? 5000
+        : false,
+  });
+}
+
+export function useCancelWorkflowTask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.cancelWorkflowTask,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["workflow-tasks"] }),
+  });
+}
+
+export function useRetryWorkflowTask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.retryWorkflowTask,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["workflow-tasks"] }),
+  });
+}
+
+// 视觉运营活动
+export function useCampaigns(params?: { status?: string; page?: number; pageSize?: number }) {
+  return useQuery({
+    queryKey: ["campaigns", params],
+    queryFn: () => api.listCampaigns({
+      status: params?.status,
+      page: params?.page,
+      page_size: params?.pageSize,
+    }),
+    refetchInterval: 30000,
+  });
+}
+
+export function useCampaign(campaignId: string) {
+  return useQuery({
+    queryKey: ["campaign", campaignId],
+    queryFn: () => api.getCampaign(campaignId),
+    enabled: Boolean(campaignId),
+    refetchInterval: 30000,
+  });
+}
+
+export function useCreateCampaign() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CampaignCreateRequest) => api.createCampaign(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["campaigns"] }),
+  });
+}
+
+export function useUpdateCampaign() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ campaignId, body }: { campaignId: string; body: CampaignUpdateRequest }) =>
+      api.updateCampaign(campaignId, body),
+    onSuccess: (campaign) => {
+      qc.invalidateQueries({ queryKey: ["campaigns"] });
+      qc.invalidateQueries({ queryKey: ["campaign", campaign.id] });
+    },
+  });
+}
+
+export function useCreateCampaignInsight() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ campaignId, body }: { campaignId: string; body: CampaignInsightCreateRequest }) =>
+      api.createCampaignInsight(campaignId, body),
+    onSuccess: (_insight, variables) => {
+      qc.invalidateQueries({ queryKey: ["campaign", variables.campaignId] });
+    },
+  });
+}
+
 // 审核
-export function useReviewQueue(page = 1, pageSize = 20, marketVariant?: string) {
+export function useReviewQueue(page = 1, pageSize = 20, marketVariant?: string, enabled = true) {
   return useQuery({
     queryKey: ["review-queue", { page, pageSize, marketVariant }],
     queryFn: () => api.getReviewQueue(page, pageSize, marketVariant),
+    enabled,
     refetchInterval: 10000,
   });
 }
@@ -124,10 +373,11 @@ export function usePredictionHistory(imageId: number) {
 }
 
 // A/B 实验
-export function useExperiments(page = 1, pageSize = 20, status?: string) {
+export function useExperiments(page = 1, pageSize = 20, status?: string, enabled = true) {
   return useQuery({
     queryKey: ["experiments", { page, pageSize, status }],
     queryFn: () => api.listExperiments(page, pageSize, status),
+    enabled,
     refetchInterval: 30000,
   });
 }
@@ -169,10 +419,11 @@ export function useTriggerAutoCreateExperiments() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["experiments"] }),
   });
 }
-export function useAutoExperimentSummary() {
+export function useAutoExperimentSummary(enabled = true) {
   return useQuery({
     queryKey: ["auto-experiment-summary"],
     queryFn: () => api.getAutoExperimentSummary(),
+    enabled,
   });
 }
 export function useUpdateExperimentTraffic() {
@@ -195,29 +446,33 @@ export function useTriggerFlywheelRetrain() {
 }
 
 // 运营看板
-export function useDashboardSummary(params?: { market?: string; category?: string }) {
+export function useDashboardSummary(params?: { market?: string; category?: string }, enabled = true) {
   return useQuery({
     queryKey: ["dashboard-summary", params],
     queryFn: () => api.getDashboardSummary(params),
+    enabled,
     refetchInterval: 60000,
   });
 }
-export function useCTRTrend(days = 30) {
+export function useCTRTrend(days = 30, enabled = true) {
   return useQuery({
     queryKey: ["ctr-trend", days],
     queryFn: () => api.getCTRTrend(days),
+    enabled,
   });
 }
-export function useMarketComparison() {
+export function useMarketComparison(enabled = true) {
   return useQuery({
     queryKey: ["market-comparison"],
     queryFn: api.getMarketComparison,
+    enabled,
   });
 }
-export function useStyleInsight() {
+export function useStyleInsight(enabled = true) {
   return useQuery({
     queryKey: ["style-insight"],
     queryFn: api.getStyleInsight,
+    enabled,
   });
 }
 

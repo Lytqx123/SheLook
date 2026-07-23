@@ -6,7 +6,7 @@ from enum import StrEnum
 from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, func
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import Base
+from app.db.base import Base, TenantScopedMixin
 
 
 class ExperimentStatus(StrEnum):
@@ -16,7 +16,7 @@ class ExperimentStatus(StrEnum):
     COMPLETED = "completed"
 
 
-class ABExperiment(Base):
+class ABExperiment(TenantScopedMixin, Base):
     """A/B 实验表 —— 对比两版图片的 CTR 表现"""
 
     __tablename__ = "ab_experiments"

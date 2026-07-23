@@ -4,10 +4,10 @@ from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, DateTime, Enum, Integer, String, Text, func
+from sqlalchemy import JSON, DateTime, Enum, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.base import Base
+from app.db.base import Base, TenantScopedMixin
 
 if TYPE_CHECKING:
     from app.models.image import ImageScheme
@@ -20,13 +20,15 @@ class ProductStatus(StrEnum):
     ARCHIVED = "archived"
 
 
-class Product(Base):
+class Product(TenantScopedMixin, Base):
     """商品主表 —— SheLook 一切业务的起点"""
 
     __tablename__ = "products"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    sku_code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    __table_args__ = (UniqueConstraint("tenant_id", "sku_code", name="uq_products_tenant_sku"),)
+
+    sku_code: Mapped[str] = mapped_column(String(64), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     category: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     # 先这样用字符串存，后面统一改 Decimal

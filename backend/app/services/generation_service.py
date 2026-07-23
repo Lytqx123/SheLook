@@ -9,11 +9,16 @@ from typing import Any
 
 import httpx
 from PIL import Image, ImageDraw
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.core.logging import logger
 from app.services.c2pa_service import sign_generated_asset
 from app.services.image_fetcher import fetch_image
+from app.services.provider_config_service import (
+    ProviderRuntimeConfig,
+    resolve_provider_runtime_config,
+)
 from app.services.storage_service import store_image
 
 CATEGORY_MODEL_MAP: dict[str, tuple[str, str]] = {
@@ -40,7 +45,14 @@ def route_model(category: str | None = None) -> dict[str, str]:
     return {"provider": provider, "model": model}
 
 
-async def _replicate_asset(prompt: str, model: str, negative_prompt: str, width: int, height: int) -> ProviderAsset:
+async def _replicate_asset(
+    prompt: str,
+    model: str,
+    negative_prompt: str,
+    width: int,
+    height: int,
+    api_token: str,
+) -> ProviderAsset:
     import replicate
 
     params: dict[str, Any] = {
@@ -53,7 +65,8 @@ async def _replicate_asset(prompt: str, model: str, negative_prompt: str, width:
     }
     if negative_prompt:
         params["negative_prompt"] = negative_prompt
-    output = await asyncio.to_thread(replicate.run, model, input=params)
+    client = replicate.Client(api_token=api_token)
+    output = await asyncio.to_thread(client.run, model, input=params)
     source = output[0] if isinstance(output, list) and output else output
     if not source:
         raise GenerationUnavailableError("Replicate 未返回图片")
@@ -61,12 +74,18 @@ async def _replicate_asset(prompt: str, model: str, negative_prompt: str, width:
     return ProviderAsset(fetched.data, fetched.content_type, model, "replicate")
 
 
-async def _google_asset(prompt: str, model: str, negative_prompt: str) -> ProviderAsset:
+async def _google_asset(
+    prompt: str,
+    model: str,
+    negative_prompt: str,
+    config: ProviderRuntimeConfig,
+) -> ProviderAsset:
     from google import genai
     from google.genai import types
 
-    http_options = types.HttpOptions(base_url=settings.GEMINI_BASE_URL) if settings.GEMINI_BASE_URL else None
-    client = genai.Client(api_key=settings.GEMINI_API_KEY, http_options=http_options)
+    base_url = config.config.get("api_base_url")
+    http_options = types.HttpOptions(base_url=base_url) if base_url else None
+    client = genai.Client(api_key=config.credentials["api_key"], http_options=http_options)
     full_prompt = prompt + (f"\n\nDo not include: {negative_prompt}" if negative_prompt else "")
     response = await client.aio.models.generate_content(
         model=model,
@@ -114,6 +133,15 @@ def _development_mock(width: int, height: int) -> ProviderAsset:
 
 
 class GenerationService:
+    def __init__(self, db: AsyncSession | None = None, tenant_id: str | None = None):
+        self.db = db
+        self.tenant_id = tenant_id
+
+    async def _provider_config(self, provider: str) -> ProviderRuntimeConfig | None:
+        if self.db is None:
+            return None
+        return await resolve_provider_runtime_config(self.db, provider, self.tenant_id)
+
     async def _generate_provider_asset(
         self,
         prompt: str,
@@ -125,10 +153,21 @@ class GenerationService:
         route = route_model(category)
         failures: list[str] = []
         try:
-            if route["provider"] == "replicate" and settings.REPLICATE_API_TOKEN:
-                return await _replicate_asset(prompt, route["model"], negative_prompt, width, height)
-            if route["provider"] == "google" and settings.GEMINI_API_KEY:
-                return await _google_asset(prompt, route["model"], negative_prompt)
+            if route["provider"] == "replicate":
+                config = await self._provider_config("replicate")
+                if config is not None:
+                    return await _replicate_asset(
+                        prompt,
+                        route["model"],
+                        negative_prompt,
+                        width,
+                        height,
+                        config.credentials["api_token"],
+                    )
+            if route["provider"] == "google":
+                config = await self._provider_config("gemini")
+                if config is not None:
+                    return await _google_asset(prompt, route["model"], negative_prompt, config)
             failures.append(f"{route['provider']} 未配置")
         except Exception as exc:
             failures.append(f"{route['provider']}: {exc}")
@@ -191,15 +230,17 @@ class GenerationService:
         }
 
     async def generate_batch(self, schemes: list[dict], **kwargs: Any) -> list[dict[str, Any]]:
+        semaphore = asyncio.Semaphore(max(1, settings.GENERATION_BATCH_CONCURRENCY))
+
         async def _one(index: int, scheme: dict) -> dict[str, Any]:
-            result = await self.generate(
-                prompt=scheme.get("prompt", ""),
-                category=scheme.get("category"),
-                **kwargs,
-            )
+            async with semaphore:
+                result = await self.generate(
+                    prompt=scheme.get("prompt", ""),
+                    category=scheme.get("category"),
+                    **kwargs,
+                )
             return {**result, "index": index}
 
-        # TODO: 并发太高容易触发供应商限流，后面加个 semaphore
         results = await asyncio.gather(
             *(_one(index, scheme) for index, scheme in enumerate(schemes)),
             return_exceptions=True,

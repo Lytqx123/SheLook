@@ -1,0 +1,33 @@
+groups:
+  - name: shelook-service-health
+    rules:
+      - alert: SheLookApiUnavailable
+        expr: up{job="shelook-backend"} == 0
+        for: 2m
+        labels:
+          severity: page
+          service: shelook-api
+        annotations:
+          summary: "SheLook API is unavailable"
+          runbook: "Check the readiness endpoint, recent deployment events, database connectivity and Redis health."
+      - alert: SheLookHighServerErrorRate
+        expr: |
+          sum(rate(shelook_requests_total{status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(shelook_requests_total[5m])), 1) > 0.02
+        for: 10m
+        labels:
+          severity: ticket
+          service: shelook-api
+        annotations:
+          summary: "SheLook API 5xx rate exceeds 2%"
+          runbook: "Inspect request IDs in structured logs and correlate with traces before rollback."
+      - alert: SheLookGenerationQueueBacklog
+        expr: shelook_celery_queue_length{queue="generation"} > 100
+        for: 10m
+        labels:
+          severity: ticket
+          service: shelook-generation
+        annotations:
+          summary: "Generation queue backlog exceeds 100 tasks"
+          runbook: "Check generation worker capacity, provider latency, tenant quotas and failed workflow tasks."

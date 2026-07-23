@@ -2,9 +2,30 @@
 
 # --- 认证
 from app.schemas.auth import (
+    AuthConfigResponse,
+    LoginMethodResponse,
     LoginRequest,
     TokenResponse,
     UserResponse,
+)
+
+# --- 视觉运营活动
+from app.schemas.campaign import (
+    CampaignActionItem,
+    CampaignCreateRequest,
+    CampaignDecisionSummary,
+    CampaignDetailResponse,
+    CampaignExperimentSummary,
+    CampaignImageSummary,
+    CampaignInsightCreateRequest,
+    CampaignInsightListResponse,
+    CampaignInsightResponse,
+    CampaignListResponse,
+    CampaignProductSummary,
+    CampaignResponse,
+    CampaignStatusUpdateRequest,
+    CampaignTimelineItem,
+    CampaignUpdateRequest,
 )
 
 # --- 聚类分析
@@ -40,6 +61,14 @@ from app.schemas.generation import (
     L3AestheticSchema,
     QualityScores,
 )
+from app.schemas.integration import (
+    DianxiaomiConfigCheckResponse,
+    DianxiaomiConnectionCreate,
+    DianxiaomiConnectionResponse,
+    DianxiaomiConnectionUpdate,
+    DianxiaomiCredentialsInput,
+    IntegrationSyncRunResponse,
+)
 
 # --- 数据指标
 from app.schemas.metrics import (
@@ -50,6 +79,18 @@ from app.schemas.metrics import (
     MetricsStatsResponse,
     MetricsSyncResponse,
     MetricsUpsertResult,
+)
+from app.schemas.organization import (
+    OrganizationUnitCreate,
+    OrganizationUnitResponse,
+    TenantContextResponse,
+    TenantFeatureFlagResponse,
+    TenantFeatureFlagUpdate,
+    TenantMemberInvite,
+    TenantMemberResponse,
+    TenantMemberUpsert,
+    TenantQuotaResponse,
+    TenantQuotaUpdate,
 )
 
 # --- 效果预估
@@ -68,11 +109,21 @@ from app.schemas.product import (
     ProductUpdate,
     SchemeOut,
 )
+from app.schemas.provider_config import (
+    ProviderConfigResponse,
+    ProviderConfigUpsert,
+    ProviderConfigValidationResponse,
+)
 
 # --- 审核
 from app.schemas.review import (
     ReviewRequest,
     ReviewResponse,
+)
+from app.schemas.runtime_setting import (
+    RuntimeSettingResponse,
+    RuntimeSettingRevisionResponse,
+    RuntimeSettingUpdate,
 )
 
 # --- 视觉方案
@@ -111,6 +162,11 @@ from app.schemas.vision_reward import (
     PairwiseComparison,
     VisionRewardRequest,
     VisionRewardResponse,
+)
+from app.schemas.workflow import (
+    WorkflowActionResponse,
+    WorkflowTaskListResponse,
+    WorkflowTaskResponse,
 )
 
 __all__ = [
@@ -166,9 +222,42 @@ __all__ = [
     "VisionRewardResponse",
     "PairwiseComparison",
     # 认证
+    "AuthConfigResponse",
     "LoginRequest",
+    "LoginMethodResponse",
     "TokenResponse",
     "UserResponse",
+    # 视觉运营活动
+    "CampaignCreateRequest",
+    "CampaignUpdateRequest",
+    "CampaignStatusUpdateRequest",
+    "CampaignResponse",
+    "CampaignListResponse",
+    "CampaignDetailResponse",
+    "CampaignProductSummary",
+    "CampaignImageSummary",
+    "CampaignExperimentSummary",
+    "CampaignDecisionSummary",
+    "CampaignActionItem",
+    "CampaignTimelineItem",
+    "CampaignInsightCreateRequest",
+    "CampaignInsightResponse",
+    "CampaignInsightListResponse",
+    # 企业组织
+    "TenantContextResponse",
+    "OrganizationUnitCreate",
+    "OrganizationUnitResponse",
+    "TenantMemberInvite",
+    "TenantMemberUpsert",
+    "TenantMemberResponse",
+    "TenantQuotaUpdate",
+    "TenantQuotaResponse",
+    "TenantFeatureFlagUpdate",
+    "TenantFeatureFlagResponse",
+    # 工作流任务中心
+    "WorkflowTaskResponse",
+    "WorkflowTaskListResponse",
+    "WorkflowActionResponse",
     # 视频生成
     "VideoGenerateRequest",
     # 数据指标
@@ -179,6 +268,19 @@ __all__ = [
     "MetricsSyncResponse",
     "MetricsUpsertResult",
     "MetricsRawItem",
+    # 店小秘集成
+    "DianxiaomiCredentialsInput",
+    "DianxiaomiConnectionCreate",
+    "DianxiaomiConnectionUpdate",
+    "DianxiaomiConnectionResponse",
+    "DianxiaomiConfigCheckResponse",
+    "IntegrationSyncRunResponse",
+    "RuntimeSettingUpdate",
+    "RuntimeSettingResponse",
+    "RuntimeSettingRevisionResponse",
+    "ProviderConfigUpsert",
+    "ProviderConfigResponse",
+    "ProviderConfigValidationResponse",
     # 供应商分析
     "SupplierAnalyzeRequest",
     "SupplierReportResponse",

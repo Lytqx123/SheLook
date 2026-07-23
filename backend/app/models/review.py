@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.base import Base
+from app.db.base import Base, TenantScopedMixin
 
 if TYPE_CHECKING:
     from app.models.image import GeneratedImage
@@ -19,7 +19,7 @@ class ReviewAction(StrEnum):
     REJECTED = "rejected"
 
 
-class ReviewRecord(Base):
+class ReviewRecord(TenantScopedMixin, Base):
     """人工审核记录 —— 留痕可追溯"""
 
     __tablename__ = "review_records"

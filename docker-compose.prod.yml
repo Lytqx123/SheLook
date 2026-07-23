@@ -1,23 +1,50 @@
-# SheLook Production 覆盖配置
-# 用法: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# SheLook production overlay
 #
-# 和 staging 的区别：
-#   不暴露后端 / Flower 端口
-#   限制资源上限
-#   生产级健康检查间隔
+# This overlay only consumes versioned images. It removes source mounts and
+# every direct management port; nginx is the sole published Compose endpoint.
+# Provide image references (prefer registry digests), owner migration URL and
+# secret-file paths through the selected .env.prod file or deployment system.
+
+name: ${COMPOSE_PROJECT_NAME:-shelook-prod}
 
 services:
+  postgres:
+    ports: !reset []
+
+  redis:
+    ports: !reset []
+
+  minio:
+    ports: !reset []
+
+  pgbouncer:
+    ports: !reset []
+
+  sd-webui:
+    ports: !reset []
+
   backend:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE must reference the production backend image}
+    build: !reset null
     environment:
       APP_ENV: production
       DEBUG: "false"
-      LOG_LEVEL: WARNING
-    # 生产环境不暴露 8000 端口，仅通过 nginx 代理访问
+      LOG_LEVEL: ${LOG_LEVEL:-WARNING}
+      ENABLE_AUTH: "true"
+      ALLOW_GENERATION_MOCKS: "false"
+      C2PA_ENABLED: "true"
+      C2PA_REQUIRED: "true"
+      C2PA_CERT_PATH: /run/secrets/c2pa-cert.pem
+      C2PA_PRIVATE_KEY_PATH: /run/secrets/c2pa-private-key.pem
     ports: !reset []
-    volumes:
-      - ./backend:/app
-      - ./secrets/c2pa-cert.pem:/run/secrets/c2pa-cert.pem:ro
-      - ./secrets/c2pa-private-key.pem:/run/secrets/c2pa-private-key.pem:ro
+    volumes: !override
+      - hf_cache:/home/appuser/.cache/huggingface
+      - model_artifacts:/app/models
+    secrets:
+      - source: c2pa_cert
+        target: c2pa-cert.pem
+      - source: c2pa_private_key
+        target: c2pa-private-key.pem
     deploy:
       resources:
         limits:
@@ -25,13 +52,32 @@ services:
         reservations:
           memory: 1G
 
-  celery-worker:
+  migrate:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE must reference the production backend image}
+    build: !reset null
     environment:
       APP_ENV: production
-    volumes:
-      - ./backend:/app
-      - ./secrets/c2pa-cert.pem:/run/secrets/c2pa-cert.pem:ro
-      - ./secrets/c2pa-private-key.pem:/run/secrets/c2pa-private-key.pem:ro
+      DATABASE_MIGRATION_URL: ${DATABASE_MIGRATION_URL:-}
+    volumes: !reset []
+
+  celery-worker:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE must reference the production backend image}
+    build: !reset null
+    environment:
+      APP_ENV: production
+      ALLOW_GENERATION_MOCKS: "false"
+      C2PA_ENABLED: "true"
+      C2PA_REQUIRED: "true"
+      C2PA_CERT_PATH: /run/secrets/c2pa-cert.pem
+      C2PA_PRIVATE_KEY_PATH: /run/secrets/c2pa-private-key.pem
+    volumes: !override
+      - hf_cache:/home/appuser/.cache/huggingface
+      - model_artifacts:/app/models
+    secrets:
+      - source: c2pa_cert
+        target: c2pa-cert.pem
+      - source: c2pa_private_key
+        target: c2pa-private-key.pem
     deploy:
       resources:
         limits:
@@ -39,33 +85,92 @@ services:
         reservations:
           memory: 2G
 
-  celery-beat:
+  celery-worker-generation:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE must reference the production backend image}
+    build: !reset null
     environment:
       APP_ENV: production
+      ALLOW_GENERATION_MOCKS: "false"
+      C2PA_ENABLED: "true"
+      C2PA_REQUIRED: "true"
+      C2PA_CERT_PATH: /run/secrets/c2pa-cert.pem
+      C2PA_PRIVATE_KEY_PATH: /run/secrets/c2pa-private-key.pem
+    volumes: !override
+      - hf_cache:/home/appuser/.cache/huggingface
+      - model_artifacts:/app/models
+    secrets:
+      - source: c2pa_cert
+        target: c2pa-cert.pem
+      - source: c2pa_private_key
+        target: c2pa-private-key.pem
+
+  celery-worker-analytics:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE must reference the production backend image}
+    build: !reset null
+    environment:
+      APP_ENV: production
+      ALLOW_GENERATION_MOCKS: "false"
+    volumes: !override
+      - hf_cache:/home/appuser/.cache/huggingface
+      - model_artifacts:/app/models
+
+  celery-beat:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE must reference the production backend image}
+    build: !reset null
+    environment:
+      APP_ENV: production
+      ALLOW_GENERATION_MOCKS: "false"
 
   flower:
-    # 生产环境不暴露 Flower 端口
-    ports: !reset []
-
-  frontend:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE must reference the production backend image}
+    build: !reset null
     environment:
       APP_ENV: production
     ports: !reset []
+    profiles: ["ops"]
+
+  frontend:
+    image: ${FRONTEND_IMAGE:?FRONTEND_IMAGE must reference the production frontend image}
+    build: !reset null
+    ports: !reset []
+
+  nginx:
+    ports: !override
+      - "${NGINX_BIND_ADDRESS:-0.0.0.0}:${NGINX_PORT:-80}:80"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
 
   prometheus:
+    ports: !reset []
+    volumes: !override
+      - ./prometheus.secure.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus:/etc/prometheus/alerts:ro
+      - prometheus_data:/prometheus
+    secrets:
+      - source: metrics_api_key
+        target: metrics_api_key
     deploy:
       resources:
         limits:
           memory: 1G
 
   grafana:
+    ports: !reset []
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set for production}
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:?GRAFANA_ROOT_URL must be set for production}
     deploy:
       resources:
         limits:
           memory: 512M
 
-  nginx:
-    deploy:
-      resources:
-        limits:
-          memory: 256M
+secrets:
+  c2pa_cert:
+    file: ${C2PA_CERT_FILE:-./secrets/c2pa-cert.pem}
+  c2pa_private_key:
+    file: ${C2PA_PRIVATE_KEY_FILE:-./secrets/c2pa-private-key.pem}
+  metrics_api_key:
+    file: ${METRICS_API_KEY_FILE:-./secrets/metrics-api-key}

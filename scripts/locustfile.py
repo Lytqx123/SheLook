@@ -20,6 +20,7 @@ TOKEN = os.getenv("SHELOOK_TOKEN", "").strip()
 USER_ID = os.getenv("SHELOOK_USER_ID", "locust-user").strip()
 USERNAME = os.getenv("SHELOOK_USERNAME", "Locust User").strip()
 ROLE = os.getenv("SHELOOK_ROLE", "viewer").strip()
+TENANT_ID = os.getenv("SHELOOK_TENANT_ID", "").strip()
 IMAGE_ID = int(os.getenv("SHELOOK_IMAGE_ID", "0") or 0)
 SCHEME_ID = int(os.getenv("SHELOOK_SCHEME_ID", "0") or 0)
 ENABLE_MUTATIONS = _is_true(os.getenv("SHELOOK_ENABLE_MUTATIONS"))
@@ -50,6 +51,8 @@ class AuthenticatedUser(HttpUser):
                     raise StopUser()
 
         self.client.headers.update({"Authorization": f"Bearer {token}"})
+        if TENANT_ID:
+            self.client.headers["X-Tenant-ID"] = TENANT_ID
 
     @staticmethod
     def expect(response, expected: set[int]) -> None:

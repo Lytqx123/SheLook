@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shelook-celery-beat
+  labels:
+    app.kubernetes.io/name: shelook-celery-beat
+    app.kubernetes.io/component: scheduler
+spec:
+  # Celery Beat is a singleton scheduler. Recreate prevents a rolling update
+  # from temporarily running two schedulers and dispatching periodic work twice.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: shelook-celery-beat
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: shelook-celery-beat
+        app.kubernetes.io/component: scheduler
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: beat
+          image: shelook-backend
+          command:
+            - celery
+            - -A
+            - app.tasks
+            - beat
+            - --loglevel=info
+            - --schedule=/tmp/celerybeat-schedule
+          envFrom:
+            - configMapRef:
+                name: shelook-runtime-config
+            - secretRef:
+                name: shelook-runtime
+          volumeMounts:
+            - name: runtime-tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: runtime-tmp
+          emptyDir: {}

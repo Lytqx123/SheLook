@@ -51,7 +51,7 @@ def _distribution_metrics(distribution: dict[str, int], market: str | None) -> d
 
 async def _classify_skin_tone(image_path: str) -> str:
     """CLIP Zero-shot 肤色分类。
-    
+
     这段 AI 写的，对"no person"的区分度有时候不太行。
     """
     try:

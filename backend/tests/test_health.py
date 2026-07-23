@@ -1,6 +1,11 @@
 """健康检查端点测试"""
 
+import asyncio
 from unittest import mock
+
+from starlette.requests import Request
+
+from app.main import unhandled_exception_handler
 
 
 def test_health_check(client) -> None:
@@ -10,6 +15,23 @@ def test_health_check(client) -> None:
     data = response.json()
     assert "status" in data
     assert "version" in data
+
+
+def test_liveness_check_is_dependency_free(client) -> None:
+    """存活探针不依赖数据库、Redis 或对象存储。"""
+    response = client.get("/api/health/live")
+    assert response.status_code == 200
+    assert response.json()["status"] == "alive"
+
+
+def test_request_id_is_validated_and_returned(client) -> None:
+    response = client.get("/api/health/live", headers={"X-Request-ID": "release-20260718"})
+    assert response.status_code == 200
+    assert response.headers["x-request-id"] == "release-20260718"
+    assert response.headers["x-audit-trace-id"] == "release-20260718"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
 
 
 def test_readiness_check(client) -> None:
@@ -56,6 +78,7 @@ def test_auth_token_endpoint(client) -> None:
     assert "access_token" in data
     assert data["token_type"] == "bearer"
     assert data["user_id"] == "test-user"
+    assert data["tenant_id"] == "default"
 
 
 def test_auth_me_endpoint(client) -> None:
@@ -65,6 +88,7 @@ def test_auth_me_endpoint(client) -> None:
     data = response.json()
     assert data["user_id"] == "dev-user"
     assert data["role"] == "admin"
+    assert data["tenant_id"] == "default"
 
 
 def test_rate_limit_bypass_health(client) -> None:
@@ -72,3 +96,13 @@ def test_rate_limit_bypass_health(client) -> None:
     for _ in range(10):
         response = client.get("/api/health")
         assert response.status_code == 200
+
+
+def test_unhandled_errors_retain_security_and_audit_headers() -> None:
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": [], "state": {"request_id": "failure-trace"}})
+    response = asyncio.run(unhandled_exception_handler(request, RuntimeError("boom")))
+
+    assert response.status_code == 500
+    assert response.headers["x-request-id"] == "failure-trace"
+    assert response.headers["x-audit-trace-id"] == "failure-trace"
+    assert response.headers["x-content-type-options"] == "nosniff"

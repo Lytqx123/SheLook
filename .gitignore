@@ -155,6 +155,8 @@ hf_cache/
 # ---- 临时文件 ----
 tmp/
 temp/
+artifacts/
+backend/.phase6-validation/
 *.tmp
 *.bak
 *.orig

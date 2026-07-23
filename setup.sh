@@ -1,501 +1,483 @@
 #!/usr/bin/env bash
-# SheLook 一键部署 —— Linux/macOS
+# SheLook 的安全部署入口（Linux / macOS）。
 #
-# 也就干这些事：检查环境、配 .env、build 镜像、起基础服务、
-# 跑迁移、初始化 MinIO、塞演示数据、全量启动
-#
-# 懒人用法:
-#   ./setup.sh                    # 全新部署
-#   ./setup.sh --skip-build       # 跳过构建
-#   ./setup.sh --clean --no-cache # 清干净重来
-#   ./setup.sh --with-sdwebui     # 开本地 SD 生图（要 GPU）
-#   ./setup.sh --stop / --restart # 停 / 重启
-#   ./setup.sh --logs backend     # 看日志
-#   ./setup.sh --status           # 看状态
-#   ./setup.sh --update           # git pull + rebuild
-#   ./setup.sh --env staging      # 指定环境
+# 所有 Compose 调用显式使用 .env.<environment>。默认不会写入演示数据；只有
+# `--env dev --seed-demo` 且经过二次确认时，才会调用 scripts.seed_data。
 
-set -euo pipefail
+set -Eeuo pipefail
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# 参数解析
 SKIP_BUILD=false
 SKIP_SEED=false
+SEED_DEMO=false
+CONFIRM_SEED_DEMO=false
 NO_CACHE=false
 WITH_SDWEBUI=false
 WITH_PGBOUNCER=false
+WITH_OPS=false
 CLEAN=false
 STOP=false
 RESTART=false
 STATUS=false
 UPDATE=false
 LOGS_SVC=""
-ENV_CHOICE=""
+ENV_CHOICE="dev"
+ENV_FILE=""
+COMPOSE_OPTIONS=()
+
+usage() {
+    cat <<'EOF'
+SheLook 部署脚本
+
+  ./setup.sh                               开发环境部署（默认，不填充演示数据）
+  ./setup.sh --env staging --update        使用不可变镜像更新预发环境
+  ./setup.sh --env prod --status           查看生产环境服务状态
+  ./setup.sh --seed-demo                   仅开发环境：填充演示数据，并要求二次确认
+  ./setup.sh --seed-demo --confirm-seed-demo
+                                           非交互式二次确认
+
+常用参数：
+  --skip-build --no-cache --with-sdwebui --with-pgbouncer --with-ops --clean --stop --restart
+  --logs <service> --status --update --env <dev|staging|prod>
+
+环境文件：
+  使用 .env.dev / .env.staging / .env.prod；缺失时仅从对应的
+  .env.<environment>.example（或 .env.example）创建一次，绝不覆盖 .env。
+EOF
+}
+
+step() { printf '\n\033[36m>>> %s\033[0m\n' "$1"; }
+ok() { printf '  \033[32m[OK]\033[0m   %s\n' "$1"; }
+warn() { printf '  \033[33m[WARN]\033[0m %s\n' "$1"; }
+err() { printf '  \033[31m[ERROR]\033[0m %s\n' "$1" >&2; }
+info() { printf '  \033[90m[INFO]\033[0m %s\n' "$1"; }
+
+on_error() {
+    local exit_code=$?
+    err "命令失败（退出码 ${exit_code}，第 ${BASH_LINENO[0]} 行）：${BASH_COMMAND}"
+    exit "$exit_code"
+}
+trap on_error ERR
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --skip-build)    SKIP_BUILD=true; shift ;;
-        --skip-seed)     SKIP_SEED=true; shift ;;
-        --no-cache)      NO_CACHE=true; shift ;;
-        --with-sdwebui)  WITH_SDWEBUI=true; shift ;;
+        --skip-build) SKIP_BUILD=true; shift ;;
+        --skip-seed) SKIP_SEED=true; shift ;;
+        --seed-demo) SEED_DEMO=true; shift ;;
+        --confirm-seed-demo) CONFIRM_SEED_DEMO=true; shift ;;
+        --no-cache) NO_CACHE=true; shift ;;
+        --with-sdwebui) WITH_SDWEBUI=true; shift ;;
         --with-pgbouncer) WITH_PGBOUNCER=true; shift ;;
-        --env)           ENV_CHOICE="${2:-}"; shift 2 ;;
-        --clean)         CLEAN=true; shift ;;
-        --stop)          STOP=true; shift ;;
-        --restart)       RESTART=true; shift ;;
-        --status)        STATUS=true; shift ;;
-        --update)        UPDATE=true; shift ;;
-        --logs)          LOGS_SVC="${2:-}"; shift 2 ;;
-        -h|--help)
-            head -15 "$0"
-            exit 0 ;;
-        *) echo "未知参数: $1"; exit 1 ;;
+        --with-ops) WITH_OPS=true; shift ;;
+        --clean) CLEAN=true; shift ;;
+        --stop) STOP=true; shift ;;
+        --restart) RESTART=true; shift ;;
+        --status) STATUS=true; shift ;;
+        --update) UPDATE=true; shift ;;
+        --logs)
+            [[ $# -ge 2 ]] || { err "--logs 需要服务名"; exit 1; }
+            LOGS_SVC="$2"; shift 2 ;;
+        --env)
+            [[ $# -ge 2 ]] || { err "--env 需要 dev、staging 或 prod"; exit 1; }
+            ENV_CHOICE="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) err "未知参数：$1"; usage; exit 1 ;;
     esac
 done
 
-# Compose 文件始终显式指定；staging / prod 追加环境覆盖文件
-COMPOSE_FILES=(-f docker-compose.yml)
+case "$ENV_CHOICE" in
+    dev|staging|prod) ;;
+    *) err "无效环境：$ENV_CHOICE（仅支持 dev、staging、prod）"; exit 1 ;;
+esac
 
-# 多环境配置：选择私有环境文件
-if [ -n "$ENV_CHOICE" ]; then
-    case "$ENV_CHOICE" in
-        dev|staging|prod)
-            env_file=".env.${ENV_CHOICE}"
-            if [ ! -f "$env_file" ]; then
-                if [ ! -f ".env.example" ]; then
-                    echo -e "  \033[31m[ERROR]\033[0m .env.example 不存在"
-                    exit 1
-                fi
-                cp .env.example "$env_file"
-                if [ "$ENV_CHOICE" != "dev" ]; then
-                    echo -e "  \033[33m[ENV]\033[0m 已创建 $env_file，请补齐该环境的密钥后重新执行"
-                    exit 1
-                fi
-                echo -e "  \033[33m[ENV]\033[0m 已从 .env.example 创建 $env_file"
-            fi
-            cp "$env_file" .env
-            echo -e "  \033[36m[ENV]\033[0m 已从 $env_file 复制到 .env"
+get_env_value() {
+    local name="$1"
+    local path="$2"
+    local line value
+    line=$(grep -E "^[[:space:]]*${name}[[:space:]]*=" "$path" | tail -n 1 || true)
+    value="${line#*=}"
+    value="${value%$'\r'}"
+    if [[ "${value:0:1}" == '"' && "${value: -1}" == '"' ]] || [[ "${value:0:1}" == "'" && "${value: -1}" == "'" ]]; then
+        value="${value:1:${#value}-2}"
+    fi
+    printf '%s' "$value"
+}
 
-            if [ "$ENV_CHOICE" = "staging" ] || [ "$ENV_CHOICE" = "prod" ]; then
-                overlay="docker-compose.${ENV_CHOICE}.yml"
-                if [ ! -f "$overlay" ]; then
-                    echo -e "  \033[31m[ERROR]\033[0m Compose 覆盖文件 $overlay 不存在"
-                    exit 1
-                fi
-                COMPOSE_FILES+=(-f "$overlay")
-            fi
-            ;;
-        *)
-            echo "无效环境: $ENV_CHOICE (可选: dev, staging, prod)"
-            exit 1
+set_env_value() {
+    local name="$1"
+    local value="$2"
+    local path="$3"
+    local temp_file
+    temp_file="$(mktemp "${path}.tmp.XXXXXX")"
+    awk -v key="$name" -v replacement="${name}=${value}" '
+        BEGIN { updated = 0 }
+        $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+            print replacement
+            updated = 1
+            next
+        }
+        { print }
+        END {
+            if (!updated) print replacement
+        }
+    ' "$path" > "$temp_file"
+    mv "$temp_file" "$path"
+}
+
+new_secret_key() {
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -hex 32
+    else
+        od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
+    fi
+}
+
+is_unsafe_secret_value() {
+    local value="${1:-}"
+    local normalized
+    normalized="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]' | xargs)"
+    case "$normalized" in
+        ""|shelook|shelook-dev|shelook123|shelook-dev-minio|shelook-dev-secret|shelook-dev-insecure-key-change-in-production|password|secret|changeme|change-me|replace-me|example|test|demo|admin|your-secret)
+            return 0
             ;;
     esac
-fi
+    [[ "$normalized" =~ ^\<.*\>$ || "$normalized" =~ ^\$\{.*\}$ || "$normalized" =~ ^your[-_].* || "$normalized" =~ (todo|placeholder) ]]
+}
 
-# 输出辅助 —— 懒得每次写颜色
-step()  { echo -e "\n\033[36m>>> $1\033[0m"; }
-ok()    { echo -e "  \033[32m[OK]\033[0m   $1"; }
-warn()  { echo -e "  \033[33m[WARN]\033[0m $1"; }
-err()   { echo -e "  \033[31m[ERROR]\033[0m $1"; }
-info()  { echo -e "  \033[90m[INFO]\033[0m $1"; }
-dot()   { echo -e "  \033[90m..\033[0m     $1"; }
+validate_non_development_environment() {
+    local errors=()
+    local name value expected actual normalized_actual
 
-# Profile 参数拼接
-PROFILE_ARGS=()
+    for name in BACKEND_IMAGE FRONTEND_IMAGE; do
+        value="$(get_env_value "$name" "$ENV_FILE")"
+        if [[ ! "$value" =~ @sha256:[[:xdigit:]]{64}$ ]]; then
+            errors+=("${name} must be digest-pinned (image@sha256:<64 hex characters>)")
+        fi
+    done
+
+    for name in SECRET_KEY INTEGRATION_CREDENTIALS_ENCRYPTION_KEY POSTGRES_PASSWORD REDIS_PASSWORD MINIO_ROOT_PASSWORD MINIO_SECRET_KEY METRICS_API_KEY GRAFANA_ADMIN_PASSWORD; do
+        value="$(get_env_value "$name" "$ENV_FILE")"
+        if is_unsafe_secret_value "$value"; then
+            errors+=("${name} must be set and must not use a development placeholder")
+        fi
+    done
+
+    value="$(get_env_value CORS_ORIGINS "$ENV_FILE")"
+    if [[ -z "$value" || "$value" =~ (localhost|127\.0\.0\.1|example\.com|your[-_]) ]]; then
+        errors+=("CORS_ORIGINS must contain non-development origins")
+    fi
+
+    value="$(get_env_value GRAFANA_ROOT_URL "$ENV_FILE")"
+    if [[ ! "$value" =~ ^https:// || "$value" =~ (localhost|127\.0\.0\.1|example\.com|your[-_]) ]]; then
+        errors+=("GRAFANA_ROOT_URL must be a non-development HTTPS URL ending in /grafana/")
+    elif [[ ! "$value" =~ /grafana/$ ]]; then
+        errors+=("GRAFANA_ROOT_URL must end in /grafana/")
+    fi
+
+    for expected in ENABLE_AUTH:true ALLOW_GENERATION_MOCKS:false C2PA_ENABLED:true C2PA_REQUIRED:true; do
+        name="${expected%%:*}"
+        value="${expected#*:}"
+        actual="$(get_env_value "$name" "$ENV_FILE")"
+        normalized_actual="$(printf '%s' "$actual" | tr '[:upper:]' '[:lower:]' | xargs)"
+        if [[ "$normalized_actual" != "$value" ]]; then
+            errors+=("${name} must be ${value}")
+        fi
+    done
+
+    if [[ -z "$(get_env_value DATABASE_MIGRATION_URL "$ENV_FILE")" ]]; then
+        errors+=("DATABASE_MIGRATION_URL must be set")
+    fi
+    for name in METRICS_API_KEY_FILE C2PA_CERT_FILE C2PA_PRIVATE_KEY_FILE; do
+        value="$(get_env_value "$name" "$ENV_FILE")"
+        if [[ -z "$value" ]]; then
+            errors+=("${name} must be set")
+        elif [[ ! -f "$value" ]]; then
+            errors+=("${name} must reference an existing regular file")
+        fi
+    done
+
+    if [[ ${#errors[@]} -gt 0 ]]; then
+        err "Staging/production preflight failed. No secret values were printed:"
+        for value in "${errors[@]}"; do
+            err "  - ${value}"
+        done
+        exit 1
+    fi
+}
+
+initialize_environment_file() {
+    ENV_FILE=".env.${ENV_CHOICE}"
+    local specific_template=".env.${ENV_CHOICE}.example"
+    local template=""
+
+    if [[ ! -f "$ENV_FILE" ]]; then
+        if [[ -f "$specific_template" ]]; then
+            template="$specific_template"
+        elif [[ -f ".env.example" ]]; then
+            template=".env.example"
+        else
+            err "未找到 ${specific_template} 或 .env.example，无法创建环境文件。"
+            exit 1
+        fi
+        cp "$template" "$ENV_FILE"
+        warn "已从 ${template} 创建 ${ENV_FILE}；请审阅其中的环境变量和密钥。"
+    fi
+
+    local secret
+    secret="$(get_env_value SECRET_KEY "$ENV_FILE")"
+    if [[ -z "$secret" ]]; then
+        if [[ "$ENV_CHOICE" != "dev" ]]; then
+            err "${ENV_FILE} 的 SECRET_KEY 不能为空。请通过密钥管理系统生成并写入后重试。"
+            exit 1
+        fi
+        set_env_value SECRET_KEY "$(new_secret_key)" "$ENV_FILE"
+        ok "已仅在 ${ENV_FILE} 中生成开发环境 SECRET_KEY"
+    fi
+
+    if [[ "$ENV_CHOICE" == "staging" || "$ENV_CHOICE" == "prod" ]]; then
+        local overlay
+        overlay="docker-compose.${ENV_CHOICE}.yml"
+        [[ -f "$overlay" ]] || { err "缺少 Compose 覆盖文件：${overlay}"; exit 1; }
+        validate_non_development_environment
+    fi
+
+    COMPOSE_OPTIONS=(--env-file "$ENV_FILE" -f docker-compose.yml)
+    if [[ "$ENV_CHOICE" == "staging" || "$ENV_CHOICE" == "prod" ]]; then
+        COMPOSE_OPTIONS+=(-f "docker-compose.${ENV_CHOICE}.yml")
+    fi
+    info "环境：${ENV_CHOICE}；Compose 使用：${ENV_FILE}（不会修改 .env）"
+}
+
+profile_args=()
 get_profile_args() {
-    PROFILE_ARGS=()
-    if $WITH_SDWEBUI;   then PROFILE_ARGS+=(--profile sd-webui); fi
-    if $WITH_PGBOUNCER; then PROFILE_ARGS+=(--profile pgbouncer); fi
+    profile_args=()
+    if "$WITH_SDWEBUI"; then
+        profile_args+=(--profile sd-webui)
+    fi
+    if "$WITH_PGBOUNCER"; then
+        profile_args+=(--profile pgbouncer)
+    fi
+    if "$WITH_OPS"; then
+        profile_args+=(--profile ops)
+    fi
 }
 
 compose() {
-    docker compose "${COMPOSE_FILES[@]}" "$@"
+    docker compose "${COMPOSE_OPTIONS[@]}" "$@"
 }
 
-# 等健康 —— 轮询 docker inspect
-wait_healthy() {
-    local max_wait=${1:-180}
-    local interval=${2:-5}
+service_state() {
+    local service="$1"
+    local container_id state
+    container_id="$(docker compose "${COMPOSE_OPTIONS[@]}" ps -q "$service" 2>/dev/null | head -n 1 || true)"
+    if [[ -z "$container_id" ]]; then
+        printf 'not-started'
+        return
+    fi
+    state="$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || true)"
+    printf '%s' "${state:-unknown}"
+}
+
+wait_for_services() {
+    local timeout="$1"
+    local interval="$2"
     shift 2
     local services=("$@")
-    local start=$(date +%s)
-    local all_healthy=false
+    local start now elapsed service state
+    start="$(date +%s)"
 
     while true; do
-        sleep "$interval"
-        all_healthy=true
-        local unhealthy=()
-        for svc in "${services[@]}"; do
-            local status
-            status=$(docker inspect --format='{{.State.Health.Status}}' "$svc" 2>/dev/null || echo "missing")
-            if [ "$status" != "healthy" ]; then
-                all_healthy=false
-                unhealthy+=("$svc($status)")
+        local unready=()
+        for service in "${services[@]}"; do
+            state="$(service_state "$service")"
+            if [[ "$state" != "healthy" && "$state" != "running" ]]; then
+                unready+=("${service} (${state})")
             fi
         done
-        if $all_healthy; then break; fi
-        local elapsed=$(( $(date +%s) - start ))
-        if [ "$elapsed" -ge "$max_wait" ]; then
-            echo "${unhealthy[*]}"
+        if [[ ${#unready[@]} -eq 0 ]]; then
+            return 0
+        fi
+        now="$(date +%s)"
+        elapsed=$((now - start))
+        if (( elapsed >= timeout )); then
+            err "服务未在 ${timeout} 秒内就绪：${unready[*]}"
             return 1
         fi
-        dot "等待健康检查... (${elapsed}s / ${max_wait}s)"
+        sleep "$interval"
     done
-    return 0
 }
 
-# ---- 子命令模式 ----
-# --status
-if $STATUS; then
-    step "服务运行状态"
+test_docker() {
+    command -v docker >/dev/null 2>&1 || { err "未找到 Docker CLI。"; exit 1; }
+    docker info >/dev/null 2>&1 || { err "Docker 未运行或当前用户无访问权限。"; exit 1; }
+    docker compose version >/dev/null 2>&1 || { err "docker compose v2 不可用。"; exit 1; }
+}
+
+BUILD_SERVICES=(
+    backend
+    migrate
+    celery-worker
+    celery-worker-generation
+    celery-worker-analytics
+    celery-beat
+    flower
+    frontend
+)
+CORE_SERVICES=(postgres redis minio)
+CRITICAL_APPLICATION_SERVICES=(
+    backend
+    frontend
+    nginx
+    celery-worker
+    celery-worker-generation
+    celery-worker-analytics
+    celery-beat
+)
+
+prepare_images() {
+    if "$SKIP_BUILD"; then
+        info "跳过镜像准备（--skip-build）。将使用本机已存在的镜像。"
+        return
+    fi
+
+    if [[ "$ENV_CHOICE" == "dev" ]]; then
+        local build_args=(build --build-arg BUILDKIT_INLINE_CACHE=1)
+        "$NO_CACHE" && build_args+=(--no-cache)
+        build_args+=("${BUILD_SERVICES[@]}")
+        step "构建开发镜像（API、迁移、全部 Worker 与前端）"
+        compose "${build_args[@]}"
+        return
+    fi
+
+    "$NO_CACHE" && warn "--no-cache 仅适用于开发环境构建，${ENV_CHOICE} 环境将忽略该参数。"
+    step "拉取 ${ENV_CHOICE} 不可变镜像（API、迁移、全部 Worker 与前端）"
+    compose pull "${BUILD_SERVICES[@]}"
+}
+
+run_migrations() {
+    step "执行数据库迁移（独立 migrate 服务）"
+    compose --profile migration run --rm migrate
+    ok "数据库迁移已完成（alembic head）"
+}
+
+initialize_object_storage() {
+    step "初始化对象存储"
+    compose run --rm --no-deps backend python scripts/init_minio.py
+    ok "MinIO 存储桶已就绪"
+}
+
+confirm_demo_seed() {
+    if ! "$SEED_DEMO"; then
+        info "默认不写入演示数据。需要演示数据时，请在开发环境执行 --seed-demo。"
+        return 1
+    fi
+    if [[ "$ENV_CHOICE" != "dev" ]]; then
+        warn "${ENV_CHOICE} 环境禁止填充演示数据；已强制跳过。"
+        return 1
+    fi
+    if "$SKIP_SEED"; then
+        err "--seed-demo 与 --skip-seed 不能同时使用。"
+        exit 1
+    fi
+    if "$CONFIRM_SEED_DEMO"; then
+        return 0
+    fi
+
+    warn "演示数据会写入当前开发数据库，不能用于已有业务数据。"
+    local confirmation
+    read -r -p "请输入 SEED-DEMO 确认填充演示数据: " confirmation
+    [[ "$confirmation" == "SEED-DEMO" ]] || { err "未完成演示数据二次确认，已取消。"; exit 1; }
+}
+
+seed_demo_data() {
+    if ! confirm_demo_seed; then
+        return
+    fi
+    step "填充开发演示数据"
+    compose run --rm --no-deps backend python -m scripts.seed_data
+    ok "开发演示数据已填充"
+}
+
+start_platform() {
+    local force_recreate="${1:-false}"
+    local up_args=()
+
+    step "启动基础服务"
+    compose up -d "${CORE_SERVICES[@]}"
+    wait_for_services 120 3 "${CORE_SERVICES[@]}"
+    ok "PostgreSQL、Redis 与 MinIO 已就绪"
+
+    run_migrations
+    initialize_object_storage
+    seed_demo_data
+
+    step "启动应用服务"
     get_profile_args
-    compose "${PROFILE_ARGS[@]}" ps 2>/dev/null || compose ps
+    up_args=("${profile_args[@]}" up -d --remove-orphans)
+    [[ "$force_recreate" == "true" ]] && up_args+=(--force-recreate)
+    compose "${up_args[@]}"
+    wait_for_services 240 5 "${CRITICAL_APPLICATION_SERVICES[@]}"
+    ok "关键应用服务已就绪"
+}
+
+show_summary() {
+    step "部署状态"
+    compose ps
+    local default_port nginx_port health_url
+    default_port="80"
+    [[ "$ENV_CHOICE" == "staging" ]] && default_port="8080"
+    nginx_port="$(get_env_value NGINX_PORT "$ENV_FILE")"
+    nginx_port="${nginx_port:-$default_port}"
+    if [[ "$nginx_port" == "80" ]]; then
+        health_url="http://localhost/api/health"
+    else
+        health_url="http://localhost:${nginx_port}/api/health"
+    fi
+    if curl -fsS --max-time 10 "$health_url" >/dev/null 2>&1; then
+        ok "健康检查通过：${health_url}"
+    else
+        warn "本机反向代理健康检查未通过；请使用 --logs nginx 或 --logs backend 查看原因。"
+    fi
+    printf '\n常用操作：\n  ./setup.sh --env %s --status\n  ./setup.sh --env %s --logs backend\n  ./setup.sh --env %s --stop\n' "$ENV_CHOICE" "$ENV_CHOICE" "$ENV_CHOICE"
+}
+
+initialize_environment_file
+test_docker
+
+if "$STATUS"; then
+    get_profile_args
+    compose "${profile_args[@]}" ps
     exit 0
 fi
-
-# --logs
-if [ -n "$LOGS_SVC" ]; then
-    echo -e "\n\033[36m>>> 跟踪 $LOGS_SVC 日志 (Ctrl+C 退出)\033[0m\n"
+if [[ -n "$LOGS_SVC" ]]; then
     compose logs -f "$LOGS_SVC"
     exit 0
 fi
-
-# --stop
-if $STOP; then
-    step "停止所有 SheLook 服务..."
+if "$STOP"; then
+    step "停止 ${ENV_CHOICE} 环境服务"
     get_profile_args
-    compose "${PROFILE_ARGS[@]}" down 2>/dev/null || true
-    ok "所有服务已停止"
+    compose "${profile_args[@]}" down || true
+    ok "服务已停止（数据卷保留）"
+    exit 0
+fi
+if "$CLEAN"; then
+    warn "--clean 会删除 ${ENV_CHOICE} 环境对应 Compose 项目的数据卷。"
+    get_profile_args
+    compose "${profile_args[@]}" down -v --remove-orphans || true
+    ok "容器与数据卷已清理"
+fi
+if "$RESTART"; then
+    step "重启 ${ENV_CHOICE} 环境（先迁移，后重建应用容器）"
+    start_platform true
+    show_summary
     exit 0
 fi
 
-# --restart
-if $RESTART; then
-    step "重启全部服务..."
-    get_profile_args
-    compose down 2>/dev/null || true
-    compose "${PROFILE_ARGS[@]}" up -d
-    ok "服务已重启"
-    compose ps
-    exit 0
+prepare_images
+if "$UPDATE"; then
+    info "--update 会部署当前工作区或仓库中已拉取的镜像；不会自动执行 git pull。"
 fi
-
-# --update
-if $UPDATE; then
-    step "更新部署 (保留数据)"
-
-    info "重新构建镜像..."
-    local_build_args=(build)
-    $NO_CACHE && local_build_args+=(--no-cache)
-    local_build_args+=(backend celery-worker frontend)
-    compose "${local_build_args[@]}"
-    ok "镜像构建完成"
-
-    get_profile_args
-    compose "${PROFILE_ARGS[@]}" up -d
-    ok "服务已启动"
-
-    info "执行数据库迁移..."
-    compose run --rm backend alembic upgrade head 2>/dev/null
-    ok "数据库迁移完成"
-
-    ok "更新部署完成"
-    compose ps
-    exit 0
-fi
-
-# ==== 1/9  环境检查 ====
-step "1/9  环境检查"
-
-# Docker
-if ! docker info >/dev/null 2>&1; then
-    err "Docker 未运行或未安装"
-    info "请先安装并启动 Docker: https://docs.docker.com/get-docker/"
-    exit 1
-fi
-DOCKER_VERSION=$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo "unknown")
-ok "Docker 引擎运行正常 (v$DOCKER_VERSION)"
-
-# docker compose
-if ! docker compose version >/dev/null 2>&1; then
-    err "docker compose 不可用"
-    info "请安装 Docker Compose V2: https://docs.docker.com/compose/install/"
-    exit 1
-fi
-COMPOSE_VER=$(docker compose version --short 2>/dev/null || echo "unknown")
-ok "docker compose v$COMPOSE_VER"
-
-# 磁盘空间 (至少 10GB)
-FREE_KB=$(df -k "$SCRIPT_DIR" 2>/dev/null | awk 'NR==2{print $4}')
-if [ -n "$FREE_KB" ] && [ "$FREE_KB" -lt 10485760 ]; then
-    FREE_GB=$(echo "scale=1; $FREE_KB / 1048576" | bc 2>/dev/null || echo "?")
-    warn "磁盘剩余空间不足: ${FREE_GB}GB (建议 >= 10GB)"
-    info "构建镜像 + CLIP 模型 + 演示数据约需 8GB"
-elif [ -n "$FREE_KB" ]; then
-    FREE_GB=$(echo "scale=1; $FREE_KB / 1048576" | bc 2>/dev/null || echo "?")
-    ok "磁盘空间充足 (${FREE_GB}GB 可用)"
-fi
-
-# 端口占用检测
-PORTS=(80 3000 8000 5432 6379 9000 9001 5555)
-PORT_CONFLICTS=()
-for port in "${PORTS[@]}"; do
-    if command -v ss >/dev/null 2>&1; then
-        if ss -tlnp 2>/dev/null | grep -q ":${port} " ; then
-            PORT_CONFLICTS+=("$port")
-        fi
-    elif command -v lsof >/dev/null 2>&1; then
-        if lsof -i :"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-            PORT_CONFLICTS+=("$port")
-        fi
-    fi
-done
-if [ ${#PORT_CONFLICTS[@]} -gt 0 ]; then
-    warn "检测到端口被占用: ${PORT_CONFLICTS[*]}"
-    info "如为 SheLook 自身容器可忽略；如为其他进程请先释放端口"
-else
-    ok "所需端口均无冲突"
-fi
-
-# --Clean 模式
-if $CLEAN; then
-    step "清理现有部署..."
-    get_profile_args
-    compose "${PROFILE_ARGS[@]}" down -v 2>/dev/null || true
-    ok "已清理所有容器和数据卷"
-fi
-
-# ==== 2/9  .env 配置 ====
-step "2/9  .env 配置"
-
-if [ ! -f ".env" ]; then
-    if [ -f ".env.example" ]; then
-        cp .env.example .env
-        ok "已从 .env.example 创建 .env"
-    else
-        err ".env.example 不存在"
-        exit 1
-    fi
-else
-    ok ".env 文件已存在"
-fi
-
-# 自动生成 SECRET_KEY
-if grep -qE '^SECRET_KEY=\s*$' .env; then
-    SECRET_KEY=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | xxd -p)
-    if [[ "$(uname)" == "Darwin" ]]; then
-        sed -i '' "s/^SECRET_KEY=\s*$/SECRET_KEY=$SECRET_KEY/" .env
-    else
-        sed -i "s/^SECRET_KEY=\s*$/SECRET_KEY=$SECRET_KEY/" .env
-    fi
-    ok "SECRET_KEY 已自动生成 (64 位 hex)"
-elif grep -qE '^SECRET_KEY=\S+' .env; then
-    KEY_LEN=$(grep -oE '^SECRET_KEY=\S+' .env | head -1 | sed 's/^SECRET_KEY=//' | wc -c)
-    if [ "$KEY_LEN" -lt 17 ]; then
-        warn "SECRET_KEY 过短 ($((KEY_LEN-1)) 字符)，建议 >= 32 字符"
-    else
-        ok "SECRET_KEY 已配置 ($((KEY_LEN-1)) 字符)"
-    fi
-else
-    SECRET_KEY=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | xxd -p)
-    echo "SECRET_KEY=$SECRET_KEY" >> .env
-    ok "SECRET_KEY 已自动生成并追加到 .env"
-fi
-
-# 检查 API Key
-if grep -qE '^GEMINI_API_KEY=\s*$' .env; then
-    warn "[GEMINI_API_KEY] Gemini (标签提取 / AI 审核 / 促销图生成) 未配置"
-fi
-if grep -qE '^REPLICATE_API_TOKEN=\s*$' .env; then
-    warn "[REPLICATE_API_TOKEN] Replicate (FLUX.2 Pro 生图) 未配置"
-fi
-if ! grep -qE '^GEMINI_API_KEY=\s*$' .env && ! grep -qE '^REPLICATE_API_TOKEN=\s*$' .env; then
-    ok "推荐 API Key 已配置"
-fi
-
-# 可选视频 Key
-for key in KLING_API_KEY RUNWAY_API_KEY; do
-    if grep -qE "^${key}=\s*$" .env; then
-        dot "可选: [$key] 未配置"
-    fi
-done
-
-# ==== 3/9  构建 Docker 镜像 ====
-step "3/9  构建 Docker 镜像"
-
-if $SKIP_BUILD; then
-    ok "跳过镜像构建 (--skip-build)"
-else
-    BUILD_ARGS=(build --build-arg BUILDKIT_INLINE_CACHE=1)
-    $NO_CACHE && BUILD_ARGS+=(--no-cache)
-    BUILD_ARGS+=(backend celery-worker frontend)
-    info "正在构建镜像 (backend / celery / frontend)..."
-    $NO_CACHE && dot "使用 --no-cache，构建时间较长"
-    START_TS=$(date +%s)
-    compose "${BUILD_ARGS[@]}"
-    END_TS=$(date +%s)
-    BUILD_SEC=$(( END_TS - START_TS ))
-    BUILD_MIN=$(( BUILD_SEC / 60 ))
-    BUILD_REM=$(( BUILD_SEC % 60 ))
-    ok "镜像构建完成 (耗时 ${BUILD_MIN}m ${BUILD_REM}s)"
-fi
-
-# ==== 4/9  启动基础服务 (PostgreSQL / Redis / MinIO) ====
-step "4/9  启动基础服务 (PostgreSQL / Redis / MinIO)"
-
-compose up -d postgres redis minio
-ok "基础服务容器已创建"
-
-info "等待基础服务健康检查..."
-if ! UNHEALTHY=$(wait_healthy 90 3 "shelook-postgres" "shelook-redis" "shelook-minio"); then
-    err "基础服务未就绪: $UNHEALTHY"
-    info "排查: docker compose logs postgres redis minio"
-    exit 1
-fi
-ok "PostgreSQL / Redis / MinIO 全部健康"
-
-# ==== 5/9  数据库迁移 ====
-step "5/9  数据库迁移 (Alembic)"
-
-info "执行 alembic upgrade head..."
-compose run --rm backend alembic upgrade head 2>&1 | while read -r line; do
-    case "$line" in
-        INFO*|Running*|Revision*) dot "$line" ;;
-        ERROR*) err "$line" ;;
-    esac
-done
-ok "数据库迁移完成 (6 个版本已应用)"
-
-# ==== 6/9  MinIO 初始化 ====
-step "6/9  MinIO 存储初始化"
-
-compose run --rm backend python scripts/init_minio.py 2>&1 | while read -r line; do
-    case "$line" in
-        *Bucket*|*policy*|*created*|*success*) dot "$line" ;;
-    esac
-done
-ok "MinIO 存储桶已就绪 (product-images)"
-
-# ==== 7/9  演示数据 ====
-step "7/9  演示数据填充"
-
-if $SKIP_SEED; then
-    ok "跳过演示数据填充 (--skip-seed)"
-else
-    info "正在填充 Mock 演示数据..."
-    compose run --rm backend python scripts/seed_data.py 2>&1 | while read -r line; do
-        case "$line" in
-            *Created*|*Inserted*|*Seed*|*Done*|*success*) dot "$line" ;;
-        esac
-    done
-    ok "Mock 演示数据已填充"
-fi
-
-# ==== 8/9  启动全部应用服务 ====
-step "8/9  启动全部应用服务"
-
-get_profile_args
-if [ ${#PROFILE_ARGS[@]} -gt 0 ]; then
-    info "Profile: ${PROFILE_ARGS[*]}"
-fi
-
-compose "${PROFILE_ARGS[@]}" up -d
-ok "应用服务容器已创建"
-
-# 等待应用健康
-info "等待应用服务健康就绪..."
-APP_SERVICES=(
-    "shelook-backend"
-    "shelook-frontend"
-    "shelook-nginx"
-    "shelook-celery-worker"
-    "shelook-celery-beat"
-    "shelook-flower"
-    "shelook-prometheus"
-    "shelook-grafana"
-)
-if ! UNHEALTHY=$(wait_healthy 180 5 "${APP_SERVICES[@]}"); then
-    warn "部分服务未就绪: $UNHEALTHY"
-    info "可能原因: CLIP 模型首次下载较慢 / Celery worker 启动中"
-    info "排查: docker compose ps ; docker compose logs <服务名>"
-else
-    ok "全部应用服务健康就绪"
-fi
-
-# ==== 9/9  验证 & 汇总 ====
-step "9/9  验证与汇总"
-
-# 后端 API
-if curl -sf http://localhost:8000/api/health >/dev/null 2>&1; then
-    HEALTH=$(curl -sf http://localhost:8000/api/health 2>/dev/null)
-    ok "后端 API 响应正常: $HEALTH"
-else
-    warn "后端 API 暂未响应"
-    info "可能仍在初始化，稍后重试: curl http://localhost:8000/api/health"
-fi
-
-# 前端
-if curl -sf -o /dev/null -w '%{http_code}' http://localhost:3000 2>/dev/null | grep -q 200; then
-    ok "前端应用响应正常"
-else
-    warn "前端应用暂未响应"
-fi
-
-# Nginx
-if curl -sf -o /dev/null -w '%{http_code}' http://localhost 2>/dev/null | grep -q 200; then
-    ok "Nginx 反向代理正常"
-else
-    warn "Nginx 暂未响应"
-fi
-
-# 服务状态表
-echo ""
-echo -e "  \033[37m服务状态一览:\033[0m"
-SERVICES=(
-    "PostgreSQL|shelook-postgres|5432|"
-    "Redis|shelook-redis|6379|"
-    "MinIO|shelook-minio|9000|http://localhost:9001"
-    "Backend (FastAPI)|shelook-backend|8000|http://localhost:8000/docs"
-    "Celery Worker|shelook-celery-worker||"
-    "Celery Beat|shelook-celery-beat||"
-    "Flower|shelook-flower|5555|http://localhost:5555/flower"
-    "Frontend (Next.js)|shelook-frontend|3000|http://localhost:3000"
-    "Nginx|shelook-nginx|80|http://localhost"
-    "Prometheus|shelook-prometheus|9090|http://localhost:9090"
-    "Grafana|shelook-grafana|3001|http://localhost/grafana/"
-)
-for svc in "${SERVICES[@]}"; do
-    IFS='|' read -r name container port url <<< "$svc"
-    status=$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null || \
-             docker inspect --format='{{.State.Status}}' "$container" 2>/dev/null || echo "missing")
-    if [ "$status" = "healthy" ] || [ "$status" = "running" ]; then
-        COLOR="\033[32m"
-    else
-        COLOR="\033[33m"
-    fi
-    printf "  ${COLOR}[%s]\033[0m %-22s :%-5s \033[36m%s\033[0m\n" "$status" "$name" "$port" "$url"
-done
-
-# ==== 部署完成 ====
-echo ""
-echo -e "\033[32m============================================================\033[0m"
-echo -e "\033[32m  SheLook 部署完成!\033[0m"
-echo -e "\033[32m============================================================\033[0m"
-echo ""
-echo -e "  \033[37m访问地址:\033[0m"
-echo -e "    \033[36m统一入口 (Nginx)     http://localhost\033[0m"
-echo -e "    \033[36m前端应用              http://localhost:3000\033[0m"
-echo -e "    \033[36m后端 Swagger          http://localhost:8000/docs\033[0m"
-echo -e "    \033[36mMinIO 控制台          http://localhost:9001\033[0m"
-echo -e "    \033[36mFlower 任务监控       http://localhost:5555/flower\033[0m"
-echo -e "    \033[36mPrometheus            http://localhost:9090\033[0m"
-echo -e "    \033[36mGrafana               http://localhost/grafana/\033[0m"
-echo ""
-echo -e "  \033[37m常用命令:\033[0m"
-echo -e "    \033[90m查看状态    ./setup.sh --status\033[0m"
-echo -e "    \033[90m查看日志    ./setup.sh --logs backend\033[0m"
-echo -e "    \033[90m重启服务    ./setup.sh --restart\033[0m"
-echo -e "    \033[90m停止服务    ./setup.sh --stop\033[0m"
-echo -e "    \033[90m更新部署    ./setup.sh --update\033[0m"
-echo ""
+start_platform false
+show_summary

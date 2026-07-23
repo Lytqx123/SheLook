@@ -5,10 +5,10 @@ from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import Base
+from app.db.base import Base, TenantScopedMixin
 
 
-class ProductEmbedding(Base):
+class ProductEmbedding(TenantScopedMixin, Base):
     """商品向量嵌入 —— 用于相似商品检索（pgvector HNSW 索引）"""
 
     __tablename__ = "product_embeddings"

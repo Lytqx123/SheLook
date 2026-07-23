@@ -1,49 +1,153 @@
-# SheLook Staging 覆盖配置
-# 用法: docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d
+# SheLook staging overlay
 #
-# 和 production 的区别：
-#   不限制资源（方便压测看上限）
-#   暴露 backend/frontend/Flower/Prometheus/Grafana 端口便于调试
+# Staging consumes pre-built images and keeps the production network shape:
+# no application source bind mounts and no direct diagnostic host ports. Use
+# nginx through the staging ingress/host port for acceptance testing.
+
+name: ${COMPOSE_PROJECT_NAME:-shelook-staging}
 
 services:
+  # Data and diagnostic services stay on the internal Compose network in
+  # staging. Nginx is the only host-published endpoint.
+  postgres:
+    ports: !reset []
+
+  redis:
+    ports: !reset []
+
+  minio:
+    ports: !reset []
+
+  pgbouncer:
+    ports: !reset []
+
+  sd-webui:
+    ports: !reset []
+
   backend:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE must reference the staged backend image}
+    build: !reset null
     environment:
       APP_ENV: staging
       DEBUG: "false"
-      LOG_LEVEL: INFO
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./backend:/app
-      - ./secrets/c2pa-cert.pem:/run/secrets/c2pa-cert.pem:ro
-      - ./secrets/c2pa-private-key.pem:/run/secrets/c2pa-private-key.pem:ro
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ENABLE_AUTH: "true"
+      ALLOW_GENERATION_MOCKS: "false"
+      C2PA_ENABLED: "true"
+      C2PA_REQUIRED: "true"
+      C2PA_CERT_PATH: /run/secrets/c2pa-cert.pem
+      C2PA_PRIVATE_KEY_PATH: /run/secrets/c2pa-private-key.pem
+    ports: !reset []
+    volumes: !override
+      - hf_cache:/home/appuser/.cache/huggingface
+      - model_artifacts:/app/models
+    secrets:
+      - source: c2pa_cert
+        target: c2pa-cert.pem
+      - source: c2pa_private_key
+        target: c2pa-private-key.pem
+
+  migrate:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE must reference the staged backend image}
+    build: !reset null
+    environment:
+      APP_ENV: staging
+      DATABASE_MIGRATION_URL: ${DATABASE_MIGRATION_URL:-}
+    volumes: !reset []
 
   celery-worker:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE must reference the staged backend image}
+    build: !reset null
     environment:
       APP_ENV: staging
-    volumes:
-      - ./backend:/app
-      - ./secrets/c2pa-cert.pem:/run/secrets/c2pa-cert.pem:ro
-      - ./secrets/c2pa-private-key.pem:/run/secrets/c2pa-private-key.pem:ro
+      ALLOW_GENERATION_MOCKS: "false"
+      C2PA_ENABLED: "true"
+      C2PA_REQUIRED: "true"
+      C2PA_CERT_PATH: /run/secrets/c2pa-cert.pem
+      C2PA_PRIVATE_KEY_PATH: /run/secrets/c2pa-private-key.pem
+    volumes: !override
+      - hf_cache:/home/appuser/.cache/huggingface
+      - model_artifacts:/app/models
+    secrets:
+      - source: c2pa_cert
+        target: c2pa-cert.pem
+      - source: c2pa_private_key
+        target: c2pa-private-key.pem
+
+  celery-worker-generation:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE must reference the staged backend image}
+    build: !reset null
+    environment:
+      APP_ENV: staging
+      ALLOW_GENERATION_MOCKS: "false"
+      C2PA_ENABLED: "true"
+      C2PA_REQUIRED: "true"
+      C2PA_CERT_PATH: /run/secrets/c2pa-cert.pem
+      C2PA_PRIVATE_KEY_PATH: /run/secrets/c2pa-private-key.pem
+    volumes: !override
+      - hf_cache:/home/appuser/.cache/huggingface
+      - model_artifacts:/app/models
+    secrets:
+      - source: c2pa_cert
+        target: c2pa-cert.pem
+      - source: c2pa_private_key
+        target: c2pa-private-key.pem
+
+  celery-worker-analytics:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE must reference the staged backend image}
+    build: !reset null
+    environment:
+      APP_ENV: staging
+      ALLOW_GENERATION_MOCKS: "false"
+    volumes: !override
+      - hf_cache:/home/appuser/.cache/huggingface
+      - model_artifacts:/app/models
 
   celery-beat:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE must reference the staged backend image}
+    build: !reset null
     environment:
       APP_ENV: staging
+      ALLOW_GENERATION_MOCKS: "false"
 
   flower:
-    ports:
-      - "5555:5555"
-
-  frontend:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE must reference the staged backend image}
+    build: !reset null
     environment:
       APP_ENV: staging
-    ports:
-      - "3000:3000"
+    ports: !reset []
+    profiles: ["ops"]
+
+  frontend:
+    image: ${FRONTEND_IMAGE:?FRONTEND_IMAGE must reference the staged frontend image}
+    build: !reset null
+    ports: !reset []
+
+  nginx:
+    ports: !override
+      - "${NGINX_BIND_ADDRESS:-127.0.0.1}:${NGINX_PORT:-8080}:80"
 
   prometheus:
-    ports:
-      - "9090:9090"
+    ports: !reset []
+    volumes: !override
+      - ./prometheus.secure.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus:/etc/prometheus/alerts:ro
+      - prometheus_data:/prometheus
+    secrets:
+      - source: metrics_api_key
+        target: metrics_api_key
 
   grafana:
-    ports:
-      - "3001:3000"
+    ports: !reset []
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set for staging}
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:?GRAFANA_ROOT_URL must be set for staging}
+
+secrets:
+  c2pa_cert:
+    file: ${C2PA_CERT_FILE:-./secrets/c2pa-cert.pem}
+  c2pa_private_key:
+    file: ${C2PA_PRIVATE_KEY_FILE:-./secrets/c2pa-private-key.pem}
+  metrics_api_key:
+    file: ${METRICS_API_KEY_FILE:-./secrets/metrics-api-key}

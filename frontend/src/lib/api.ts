@@ -15,6 +15,7 @@ import type {
   AutoReviewResult,
   AuditLogResponse, AuditTraceResponse, AuditLogDetail,
   VideoGenerateParams, VideoGenerateResponse, VideoProvidersResponse,
+  ProviderConfig, ProviderConfigInput, ProviderConfigValidation,
   ClusteringRunRequest, ClusteringRunResponse,
   SkinToneItem, FairnessMarketDemographic, SchemeFairnessItem,
   SupplierReport, SupplierReportHistoryItem,
@@ -23,6 +24,12 @@ import type {
   VisionRewardRequest, VisionRewardResponse,
   MetricsBatchRequest, MetricsBatchResponse, MetricsStatsResponse, MetricsSyncResponse,
   ModelVersionsResponse, ModelRollbackRequest, ModelRollbackResponse,
+  TenantContext, WorkflowActionResponse, WorkflowTaskList, WorkflowTaskStatus,
+  Campaign, CampaignCreateRequest, CampaignDetail, CampaignInsight,
+  CampaignInsightCreateRequest, CampaignList, CampaignUpdateRequest,
+  DianxiaomiConfigCheck, DianxiaomiConnection, DianxiaomiConnectionInput,
+  DianxiaomiSyncRun, DianxiaomiSyncStart,
+  RuntimeSetting, RuntimeSettingRevision,
 } from "@/types";
 
 const API_BASE = "/api";
@@ -51,6 +58,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   }
   const res = await fetch(`${API_BASE}${url}`, {
     ...options,
+    credentials: "same-origin",
     headers,
   });
   if (!res.ok) {
@@ -104,6 +112,91 @@ export const api = {
     }),
   getGenerationStatus: (imageId: number) =>
     request<GenerationStatus>(`/generation/${imageId}/status`),
+
+  // 组织上下文与统一任务中心
+  getTenantContext: () => request<TenantContext>("/organization/context"),
+
+  // 店小秘集成中心：凭据仅可提交，服务端不会返回明文。
+  listDianxiaomiConnections: () => request<DianxiaomiConnection[]>("/integrations/dianxiaomi"),
+  createDianxiaomiConnection: (body: DianxiaomiConnectionInput) =>
+    request<DianxiaomiConnection>("/integrations/dianxiaomi", {
+      method: "POST", body: JSON.stringify(body),
+    }),
+  updateDianxiaomiConnection: (id: string, body: Partial<DianxiaomiConnectionInput>) =>
+    request<DianxiaomiConnection>(`/integrations/dianxiaomi/${id}`, {
+      method: "PATCH", body: JSON.stringify(body),
+    }),
+  validateDianxiaomiConnection: (id: string) =>
+    request<DianxiaomiConfigCheck>(`/integrations/dianxiaomi/${id}/validate`, {
+      method: "POST",
+    }),
+  listDianxiaomiSyncRuns: (id: string) =>
+    request<DianxiaomiSyncRun[]>(`/integrations/dianxiaomi/${id}/sync-runs`),
+  startDianxiaomiSync: (id: string) =>
+    request<DianxiaomiSyncStart>(`/integrations/dianxiaomi/${id}/sync`, { method: "POST" }),
+  deleteDianxiaomiConnection: (id: string) =>
+    request<void>(`/integrations/dianxiaomi/${id}`, { method: "DELETE" }),
+  listProviderConfigs: () => request<ProviderConfig[]>("/provider-configs"),
+  updateProviderConfig: (provider: ProviderConfig["provider"], body: ProviderConfigInput) =>
+    request<ProviderConfig>(`/provider-configs/${provider}`, {
+      method: "PUT", body: JSON.stringify(body),
+    }),
+  validateProviderConfig: (provider: ProviderConfig["provider"]) =>
+    request<ProviderConfigValidation>(`/provider-configs/${provider}/validate`, { method: "POST" }),
+  deleteProviderConfig: (provider: ProviderConfig["provider"]) =>
+    request<void>(`/provider-configs/${provider}`, { method: "DELETE" }),
+  listRuntimeSettings: () => request<RuntimeSetting[]>("/runtime-settings"),
+  updateRuntimeSetting: (key: string, value: number) =>
+    request<RuntimeSetting>(`/runtime-settings/${encodeURIComponent(key)}`, {
+      method: "PUT", body: JSON.stringify({ value }),
+    }),
+  resetRuntimeSetting: (key: string) =>
+    request<RuntimeSetting>(`/runtime-settings/${encodeURIComponent(key)}/reset`, {
+      method: "POST",
+    }),
+  getRuntimeSettingHistory: (key: string) =>
+    request<RuntimeSettingRevision[]>(`/runtime-settings/${encodeURIComponent(key)}/history`),
+  getWorkflowTasks: (params?: {
+    status?: WorkflowTaskStatus;
+    task_type?: string;
+    page?: number;
+    page_size?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set("status", params.status);
+    if (params?.task_type) qs.set("task_type", params.task_type);
+    if (params?.page) qs.set("page", String(params.page));
+    if (params?.page_size) qs.set("page_size", String(params.page_size));
+    const query = qs.toString();
+    return request<WorkflowTaskList>(`/workflows${query ? `?${query}` : ""}`);
+  },
+  cancelWorkflowTask: (taskId: string) =>
+    request<WorkflowActionResponse>(`/workflows/${taskId}/cancel`, { method: "POST" }),
+  retryWorkflowTask: (taskId: string) =>
+    request<WorkflowActionResponse>(`/workflows/${taskId}/retry`, { method: "POST" }),
+
+  // 视觉运营活动：让生产、审核、预测、实验与复盘回到同一条经营主线。
+  listCampaigns: (params?: { status?: string; page?: number; page_size?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set("status", params.status);
+    if (params?.page) qs.set("page", String(params.page));
+    if (params?.page_size) qs.set("page_size", String(params.page_size));
+    const query = qs.toString();
+    return request<CampaignList>(`/v1/campaigns${query ? `?${query}` : ""}`);
+  },
+  getCampaign: (campaignId: string) =>
+    request<CampaignDetail>(`/v1/campaigns/${campaignId}`),
+  createCampaign: (body: CampaignCreateRequest) =>
+    request<Campaign>("/v1/campaigns", { method: "POST", body: JSON.stringify(body) }),
+  updateCampaign: (campaignId: string, body: CampaignUpdateRequest) =>
+    request<Campaign>(`/v1/campaigns/${campaignId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  getCampaignInsights: (campaignId: string) =>
+    request<CampaignInsight[]>(`/v1/campaigns/${campaignId}/insights`),
+  createCampaignInsight: (campaignId: string, body: CampaignInsightCreateRequest) =>
+    request<CampaignInsight>(`/v1/campaigns/${campaignId}/insights`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   // 审核
   getReviewQueue: (page = 1, pageSize = 20, marketVariant?: string) => {
@@ -243,8 +336,10 @@ export const api = {
   login: (body: LoginRequest) =>
     request<TokenResponse>("/auth/token", { method: "POST", body: JSON.stringify(body) }),
   getAuthConfig: () => request<AuthConfigResponse>("/auth/config"),
-  beginOIDCLogin: () =>
-    request<OIDCLoginResponse>("/auth/login", { method: "POST" }),
+  beginOIDCLogin: (loginPath = "/auth/login") =>
+    request<OIDCLoginResponse>(loginPath, { method: "POST" }),
+  beginFeishuLogin: (loginPath = "/auth/feishu/login") =>
+    request<OIDCLoginResponse>(loginPath, { method: "POST" }),
   completeOIDCLogin: (code: string, state: string) =>
     request<TokenResponse>("/auth/callback", {
       method: "POST",

@@ -1,0 +1,29 @@
+-- Run this template as a PostgreSQL cluster/database administrator, after
+-- replacing role names and injecting passwords through a secret manager, e.g.
+-- psql -v migrator_password='...' -v runtime_password='...' -f roles.sql.example
+-- It deliberately creates separate migration and runtime principals: the API,
+-- workers and tenant-provisioning Job must never receive the migration URL.
+
+CREATE ROLE shelook_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS
+  PASSWORD :'migrator_password';
+CREATE ROLE shelook_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS
+  PASSWORD :'runtime_password';
+
+GRANT CONNECT ON DATABASE shelook TO shelook_migrator, shelook_runtime;
+GRANT USAGE, CREATE ON SCHEMA public TO shelook_migrator;
+GRANT USAGE ON SCHEMA public TO shelook_runtime;
+
+-- Run Alembic from an empty database as shelook_migrator.  It then owns new
+-- tables and can create future migrations.  After each migration release,
+-- grant application access without granting ownership or BYPASSRLS.
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO shelook_runtime;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO shelook_runtime;
+ALTER DEFAULT PRIVILEGES FOR ROLE shelook_migrator IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO shelook_runtime;
+ALTER DEFAULT PRIVILEGES FOR ROLE shelook_migrator IN SCHEMA public
+  GRANT USAGE, SELECT ON SEQUENCES TO shelook_runtime;
+
+-- Existing installations need an audited DBA-led ownership transfer before
+-- enabling this model. Do not use REASSIGN OWNED blindly in a shared cluster.
+-- Verify every tenant table has relrowsecurity = true and
+-- relforcerowsecurity = true after migration 014.

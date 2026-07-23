@@ -5,10 +5,10 @@ from datetime import datetime
 from sqlalchemy import JSON, DateTime, Float, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import Base
+from app.db.base import Base, TenantScopedMixin
 
 
-class SupplierVisualScore(Base):
+class SupplierVisualScore(TenantScopedMixin, Base):
     """供应商视觉评分 —— 按品牌聚合供应商的图片质量/合规通过率"""
 
     __tablename__ = "supplier_visual_scores"

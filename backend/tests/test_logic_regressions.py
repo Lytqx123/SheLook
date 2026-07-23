@@ -12,7 +12,7 @@ import pytest
 from app.config import settings
 from app.services import fairness_service
 from app.services.c2pa_service import AI_SOURCE_TYPE, verify_c2pa_manifest_v2
-from app.services.clustering_service import _run_kmeans
+from app.services.clustering_service import _fetch_embeddings, _run_kmeans
 from app.services.fairness_service import _classify_images, _distribution_metrics
 from app.services.image_fetcher import (
     ImageFetchError,
@@ -95,6 +95,21 @@ def test_kmeans_accepts_a_single_sample():
     assert result["n_clusters"] == 1
     assert result["labels"].tolist() == [0]
     assert result["silhouette"] is None
+
+
+def test_clustering_embedding_query_binds_and_filters_current_tenant():
+    db = mock.AsyncMock()
+    result = mock.Mock()
+    result.fetchall.return_value = []
+    db.execute.return_value = result
+
+    product_ids, vectors = asyncio.run(_fetch_embeddings(db, category=None, market=None))
+
+    statement, params = db.execute.await_args.args
+    assert product_ids == []
+    assert vectors.size == 0
+    assert params["tenant_id"] == "default"
+    assert "p.tenant_id = :tenant_id" in str(statement)
 
 
 def test_image_fetcher_blocks_private_ip_without_explicit_trust(monkeypatch):

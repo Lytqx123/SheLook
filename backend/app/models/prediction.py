@@ -10,6 +10,7 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
@@ -17,7 +18,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import Base
+from app.db.base import Base, TenantScopedMixin
 
 
 class ReturnRiskLevel(StrEnum):
@@ -27,10 +28,13 @@ class ReturnRiskLevel(StrEnum):
     HIGH = "high"
 
 
-class PredictionRecord(Base):
+class PredictionRecord(TenantScopedMixin, Base):
     """预测记录 —— CTR/爆款/退货风险预估值"""
 
     __tablename__ = "prediction_records"
+    __table_args__ = (
+        Index("ix_prediction_records_tenant_predicted", "tenant_id", "predicted_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     image_id: Mapped[int] = mapped_column(
@@ -52,7 +56,7 @@ class PredictionRecord(Base):
         return f"<PredictionRecord #{self.id} ctr={self.predicted_ctr}>"
 
 
-class DailyMetric(Base):
+class DailyMetric(TenantScopedMixin, Base):
     """每日指标 —— 每张图每天的曝光/点击/转化数据"""
 
     __tablename__ = "daily_metrics"
@@ -63,6 +67,8 @@ class DailyMetric(Base):
             "source_platform",
             name="daily_metrics_image_date_platform_key",
         ),
+        Index("ix_daily_metrics_tenant_date_platform", "tenant_id", "date", "source_platform"),
+        Index("ix_daily_metrics_tenant_image_date", "tenant_id", "image_id", "date"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -79,7 +85,8 @@ class DailyMetric(Base):
     cvr: Mapped[float | None] = mapped_column(Float, nullable=True)
     add_to_cart_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
     return_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
-    # TODO: 后续接真实数据源，目前手动填
+    # 兼容原有人工指标导入；真实 CTR 训练证据由 enterprise_data 的
+    # PerformanceFact / ModelFeedbackLabel 链路单独保存，不回写预测记录。
     revenue: Mapped[float | None] = mapped_column(Float, nullable=True)
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

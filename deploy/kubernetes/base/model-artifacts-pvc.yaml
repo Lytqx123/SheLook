@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shelook-model-artifacts
+  labels:
+    app.kubernetes.io/name: shelook
+    app.kubernetes.io/component: model-artifacts
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 20Gi

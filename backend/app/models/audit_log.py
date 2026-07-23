@@ -5,15 +5,17 @@ from datetime import datetime
 from sqlalchemy import JSON, DateTime, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import Base
+from app.db.base import Base, TenantScopedMixin
 
 
-class AuditLog(Base):
+class AuditLog(TenantScopedMixin, Base):
     """AI 生成操作审计日志，用于合规回溯。"""
 
     __tablename__ = "audit_logs"
     __table_args__ = (
         Index("ix_audit_logs_created_operation", "created_at", "operation"),
+        Index("ix_audit_logs_tenant_created", "tenant_id", "created_at"),
+        Index("ix_audit_logs_tenant_operation_created", "tenant_id", "operation", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

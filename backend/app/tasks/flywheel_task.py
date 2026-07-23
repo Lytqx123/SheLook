@@ -1,37 +1,38 @@
 """数据飞轮闭环 Celery 任务。"""
 
-import asyncio
-
 from app.core.logging import logger
+from app.tasks.async_utils import run_async_task
 from app.tasks.celery_app import app
 
 
 @app.task(name="sync_daily_metrics")
 def sync_daily_metrics():
-    """每日数据回流 + 自动标注"""
+    """Mature real CTR feedback labels; predictions remain immutable."""
     from app.db.session import async_session_factory
-    from app.services.data_flywheel import aggregate_performance_data, auto_label_samples
+    from app.services.ctr_feedback import create_mature_feedback_labels
 
-    async def _run():
+    async def _run_tenant(_tenant_id: str):
         async with async_session_factory() as db:
-            perf_data = await aggregate_performance_data(db, days=30)
-            logger.info(f"数据回流: {len(perf_data)} 张图片")
-
-            result = await auto_label_samples(db, performance_data=perf_data, days=30)
+            result = await create_mature_feedback_labels(db, tenant_id=_tenant_id)
+            await db.commit()
             logger.info(
-                f"自动标注: 正样本 {result['positive_samples']}, "
-                f"负样本 {result['negative_samples']}, "
-                f"高退货 {result.get('high_return_samples', 0)}"
+                "真实 CTR 反馈标签刷新完成",
+                tenant_id=_tenant_id,
+                mature_labels_created=result["mature_labels_created"],
             )
             return result
 
+    async def _run():
+        from app.services.tenant_job_service import run_for_active_tenants
+
+        return await run_for_active_tenants(_run_tenant, source="scheduled_flywheel")
+
     try:
-        result = asyncio.run(_run())
+        tenant_results = run_async_task(_run())
         return {
             "status": "success",
-            "images_processed": result.get("total_samples", 0),
-            "positive_samples": result.get("positive_samples", 0),
-            "negative_samples": result.get("negative_samples", 0),
+            "tenants_processed": len(tenant_results),
+            "labels_created": sum(item.get("mature_labels_created", 0) for item in tenant_results.values()),
         }
     except Exception as e:
         logger.error(f"sync_daily_metrics 失败: {e}", exc_info=True)
@@ -44,14 +45,19 @@ def retrain_models():
     from app.db.session import async_session_factory
     from app.services.data_flywheel import trigger_model_retraining
 
-    async def _run():
+    async def _run_tenant(tenant_id: str):
         async with async_session_factory() as db:
-            return await trigger_model_retraining(db, days=30)
+            return await trigger_model_retraining(db, days=30, tenant_id=tenant_id)
+
+    async def _run():
+        from app.services.tenant_job_service import run_for_active_tenants
+
+        return await run_for_active_tenants(_run_tenant, source="scheduled_training")
 
     try:
-        result = asyncio.run(_run())
-        logger.info(f"模型迭代结果: {result}")
-        return result
+        results = run_async_task(_run())
+        logger.info(f"模型迭代结果: {results}")
+        return {"status": "success", "tenants_processed": len(results), "results": results}
     except Exception as e:
         logger.error(f"retrain_models 失败: {e}", exc_info=True)
         raise

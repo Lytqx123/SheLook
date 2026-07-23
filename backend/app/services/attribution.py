@@ -111,7 +111,7 @@ async def _query_variant_metrics_by_dimension(
     dimension: str,
 ) -> dict[str, dict[str, int]]:
     """查单张变体图片按 market/category/date 聚合的指标。
-    
+
     TODO: 跨品类聚合时 category 维度会退化，后续考虑加子品类字段。
     """
     from app.models import DailyMetric, GeneratedImage, ImageScheme, Product
@@ -172,7 +172,7 @@ async def dimension_breakdown(
     dimension: str,
 ) -> dict[str, Any]:
     """多维度下钻归因分析。
-    
+
     对实验按维度（market/category/date）切片，重算每个切片内 A vs B 的 Lift + p-value。
     场景：看 Lift 随时间变化趋势 / 不同市场表现差异 / 跨品类聚合差异。
     """

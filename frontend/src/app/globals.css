@@ -255,6 +255,48 @@ button, input, textarea, select { font: inherit; }
 .office-panel-note { margin: 0 0 18px; color: #728096; font-size: 13px; line-height: 1.7; }
 .office-result-block { margin-top: 16px; padding: 16px; background: #f8fafc; border: 1px solid #edf0f4; border-radius: 8px; }
 
+/* 首页决策工作台：先给出行动，再把图表作为解释层。 */
+.office-decision-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+  padding: 25px 28px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 88% 12%, rgba(102, 158, 255, 0.28), transparent 12rem),
+    linear-gradient(115deg, #17376c, #235abb 66%, #2c6ed3);
+  border: 1px solid rgba(92, 149, 244, 0.38);
+  border-radius: 12px;
+  box-shadow: 0 12px 28px rgba(29, 78, 216, 0.14);
+}
+.office-decision-hero__eyebrow { display: block; margin-bottom: 8px; color: #b8d4ff; font-size: 11px; font-weight: 700; letter-spacing: 0.09em; }
+.office-decision-hero h2 { margin: 0; color: #ffffff; font-size: 23px; font-weight: 700; letter-spacing: -0.025em; }
+.office-decision-hero p { max-width: 650px; margin: 9px 0 0; color: #dceaff; font-size: 13px; line-height: 1.7; }
+.office-decision-hero__summary { display: grid; min-width: 112px; place-items: center; gap: 4px; padding: 12px 8px; color: #d6e6ff; text-align: center; background: rgba(6, 28, 76, 0.26); border: 1px solid rgba(225, 239, 255, 0.22); border-radius: 10px; backdrop-filter: blur(8px); }
+.office-decision-hero__summary strong { color: #ffffff; font-size: 30px; font-weight: 720; font-variant-numeric: tabular-nums; line-height: 1; }
+.office-decision-hero__summary span { font-size: 11px; font-weight: 600; }
+.office-card-meta { color: #8792a4; font-size: 12px; font-weight: 500; }
+.office-decision-card .ant-card-body { padding: 8px 22px; }
+.office-decision-list { display: grid; }
+.office-decision-item { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: 14px; min-height: 87px; padding: 16px 0; border-bottom: 1px solid #edf0f4; }
+.office-decision-item:last-child { border-bottom: 0; }
+.office-decision-item__icon { display: grid; width: 34px; height: 34px; place-items: center; color: #2563eb; font-size: 16px; background: #eef5ff; border-radius: 8px; }
+.office-decision-item--urgent .office-decision-item__icon { color: #c2413a; background: #fff1f0; }
+.office-decision-item--high .office-decision-item__icon { color: #a56a00; background: #fff8e8; }
+.office-decision-item__content { min-width: 0; }
+.office-decision-item__heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: #26354d; font-size: 14px; font-weight: 680; }
+.office-decision-item__heading .ant-tag { margin: 0; font-size: 11px; font-weight: 600; }
+.office-decision-item p { margin: 5px 0 0; color: #728096; font-size: 12px; line-height: 1.6; }
+.office-decision-item > .ant-btn { justify-self: end; padding-inline: 4px; font-size: 13px; }
+.office-decision-empty { display: grid; place-items: center; padding: 20px 0 26px; }
+.office-decision-empty .ant-empty { margin-bottom: 8px; }
+.office-insights-collapse { overflow: hidden; background: #ffffff !important; border: 1px solid var(--office-line) !important; border-radius: 10px !important; box-shadow: 0 1px 2px rgba(20, 35, 59, 0.025), 0 6px 18px rgba(20, 35, 59, 0.025); }
+.office-insights-collapse > .ant-collapse-item { border-bottom: 0 !important; }
+.office-insights-collapse .ant-collapse-header { min-height: 58px; align-items: center !important; color: #34445d !important; font-size: 14px; font-weight: 650; }
+.office-insights-collapse .ant-collapse-content { border-top-color: #edf0f4 !important; }
+.office-insights-collapse .ant-collapse-content-box { padding: 22px !important; background: #fafcff; }
+
 /* 图表——弱化框线，看着干净就行 */
 .office-chart { min-width: 0; }
 .office-chart .recharts-cartesian-grid-horizontal line { stroke: #e9eef5; stroke-dasharray: 0; }
@@ -279,6 +321,85 @@ button, input, textarea, select { font: inherit; }
 .office-selection-summary .ant-tag { margin: 0; }
 .office-table-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .office-table-toolbar__meta { color: #728096; font-size: 13px; }
+.office-task-id { display: block; max-width: 210px; margin-top: 3px; overflow: hidden; color: #8792a4; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.office-task-actions { display: flex; align-items: center; gap: 2px; }
+
+/* 视觉运营活动：业务目标是主线，模块只是完成目标的手段。 */
+.office-activity-intro { display: flex; align-items: center; justify-content: space-between; gap: 28px; padding: 19px 22px; color: #3c4c65; background: linear-gradient(110deg, #f5f9ff, #fbfdff 62%, #f1f7ff); border: 1px solid #dbe8f9; border-radius: 10px; }
+.office-activity-intro__eyebrow { display: block; margin-bottom: 5px; color: #2563eb; font-size: 11px; font-weight: 750; letter-spacing: .1em; }
+.office-activity-intro strong { display: block; color: #243552; font-size: 16px; font-weight: 720; }
+.office-activity-intro p { max-width: 660px; margin: 5px 0 0; color: #728096; font-size: 12px; line-height: 1.65; }
+.office-activity-intro__steps { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; max-width: 480px; color: #52627b; font-size: 11px; font-weight: 650; }
+.office-activity-intro__steps span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.office-activity-intro__steps i { color: #95a4b8; font-size: 15px; font-style: normal; }
+.office-activity-layout { display: grid; grid-template-columns: minmax(250px, .54fr) minmax(0, 1.46fr); gap: 20px; align-items: start; }
+.office-activity-list { min-width: 0; }
+.office-activity-list .ant-card-body { padding: 14px; }
+.office-activity-list__item { display: block !important; padding: 13px 12px !important; cursor: pointer; border-bottom: 1px solid #edf0f4 !important; border-radius: 7px; transition: background .16s ease, box-shadow .16s ease; }
+.office-activity-list__item:hover { background: #f8fbff; }
+.office-activity-list__item--active { background: #edf5ff !important; box-shadow: inset 3px 0 0 #2563eb; }
+.office-activity-list__item-title, .office-activity-list__item-meta, .office-activity-list__item-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.office-activity-list__item-title strong { overflow: hidden; color: #26354d; font-size: 13px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
+.office-activity-list__item-title .ant-tag { flex: 0 0 auto; margin: 0; font-size: 11px; }
+.office-activity-list__item-meta { justify-content: flex-start; margin-top: 7px; color: #728096; font-size: 11px; }
+.office-activity-list__item-meta span + span::before { padding-right: 8px; color: #c4ccd8; content: "•"; }
+.office-activity-list__item-footer { margin-top: 10px; color: #8a96a8; font-size: 10px; }
+.office-activity-detail { display: grid; min-width: 0; gap: 20px; }
+.office-activity-hero { overflow: hidden; border-color: #dbe7f6 !important; }
+.office-activity-hero__top { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.office-activity-hero__top h2 { margin: 12px 0 5px; color: #1f304c; font-size: 23px; font-weight: 730; letter-spacing: -.025em; }
+.office-activity-hero__top p { max-width: 690px; margin: 0; color: #6d7a8e; font-size: 13px; line-height: 1.65; }
+.office-activity-hero__actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.office-next-action { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 11px; margin-top: 22px; padding: 12px 14px; background: #f6faff; border: 1px solid #deebfb; border-radius: 8px; }
+.office-next-action .ant-badge-status-dot { width: 8px; height: 8px; }
+.office-next-action strong, .office-next-action span { display: block; }
+.office-next-action strong { margin-bottom: 2px; color: #2b4162; font-size: 12px; font-weight: 720; }
+.office-next-action span { color: #697a92; font-size: 12px; line-height: 1.5; }
+.office-next-action > .anticon { color: #5f87c7; }
+.office-activity-stage-card .ant-steps { overflow-x: auto; padding-bottom: 2px; }
+.office-activity-stage-card .ant-steps-item-title { font-size: 12px !important; font-weight: 650; }
+.office-activity-stage-card .ant-steps-item-description { max-width: 112px; color: #8490a1 !important; font-size: 10px !important; line-height: 1.45; }
+.office-activity-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.office-activity-metrics .office-metric-card .ant-card-body { display: grid; gap: 6px; min-height: 94px; }
+.office-activity-lower { grid-template-columns: minmax(0, 1.08fr) minmax(310px, .92fr); }
+.office-activity-timeline { padding-bottom: 9px; }
+.office-activity-timeline strong { display: block; color: #3a4b65; font-size: 13px; font-weight: 680; }
+.office-activity-timeline p { margin: 3px 0 4px; color: #738096; font-size: 12px; line-height: 1.55; }
+.office-activity-timeline span { color: #9aa5b5; font-size: 10px; }
+.office-activity-insights { display: grid; gap: 9px; }
+.office-activity-insight { padding: 11px 12px; background: #fbfcfe; border: 1px solid #e8edf4; border-radius: 7px; }
+.office-activity-insight .ant-tag { margin: 0 7px 0 0; font-size: 10px; }
+.office-activity-insight strong { color: #35465f; font-size: 12px; font-weight: 680; }
+.office-activity-insight p { margin: 6px 0; color: #77849a; font-size: 11px; line-height: 1.55; }
+
+/* 预测结果使用“建议 + 证据 + 动作”而不是纯分数表。 */
+.office-decision-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.office-decision-card { min-width: 0; padding: 17px; background: #ffffff; border: 1px solid #e7ecf3; border-radius: 9px; box-shadow: 0 2px 5px rgba(24, 39, 63, .025); }
+.office-decision-card--opportunity { border-top: 3px solid #15936d; }
+.office-decision-card--caution { border-top: 3px solid #d98d12; }
+.office-decision-card--risk { border-top: 3px solid #c94a42; }
+.office-decision-card--neutral { border-top: 3px solid #6390d6; }
+.office-decision-card header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.office-decision-card h3 { margin: 3px 0 0; color: #2d3f5b; font-size: 15px; font-weight: 700; }
+.office-decision-card__eyebrow { color: #8591a2; font-size: 10px; font-weight: 650; letter-spacing: .025em; }
+.office-decision-card header .ant-tag { margin: 0; font-size: 11px; }
+.office-decision-card__summary { min-height: 42px; margin: 14px 0; color: #637189; font-size: 12px; line-height: 1.65; }
+.office-decision-card__metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 10px 0; border-top: 1px solid #edf0f4; border-bottom: 1px solid #edf0f4; }
+.office-decision-card__metrics > div { display: grid; gap: 4px; padding: 0 9px; border-right: 1px solid #edf0f4; }
+.office-decision-card__metrics > div:first-child { padding-left: 0; }
+.office-decision-card__metrics > div:last-child { padding-right: 0; border-right: 0; }
+.office-decision-card__metrics span { color: #8a95a5; font-size: 10px; }
+.office-decision-card__metrics strong { color: #31445f; font-size: 13px; font-weight: 720; font-variant-numeric: tabular-nums; }
+.office-decision-card__evidence { display: grid; gap: 4px; margin-top: 12px; color: #77849a; font-size: 11px; line-height: 1.55; }
+.office-decision-card__evidence strong { color: #50617a; font-size: 11px; }
+.office-decision-card__actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px; }
+.office-flywheel-learning { border-color: #dce8fb !important; }
+.office-flywheel-learning__items { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.office-flywheel-learning__item { padding: 13px; background: #fafcff; border: 1px solid #e6edf7; border-radius: 8px; }
+.office-flywheel-learning__item .ant-tag { margin: 0 7px 0 0; font-size: 10px; }
+.office-flywheel-learning__item strong { color: #334762; font-size: 12px; font-weight: 680; }
+.office-flywheel-learning__item p { margin: 7px 0; color: #708099; font-size: 12px; line-height: 1.6; }
+.office-flywheel-learning__item span { color: #8290a5; font-size: 11px; }
 
 /* 登录 */
 .login-shell {
@@ -321,7 +442,20 @@ button, input, textarea, select { font: inherit; }
 .login-card__icon { display: grid; width: 48px; height: 48px; place-items: center; margin-bottom: 22px; color: #ffffff; background: #1f5dcc; border-radius: 12px; box-shadow: 0 8px 16px rgba(37, 99, 235, 0.22); }
 .login-card h2 { margin: 0; color: #15223a; font-size: 25px; font-weight: 720; letter-spacing: -0.025em; }
 .login-card__subtitle { display: block; margin-top: 7px; color: #6d788b; line-height: 1.65; }
-.login-card .ant-form { margin-top: 28px; }
+.login-auth-options { margin-top: 28px; }
+.login-provider-button { height: 48px; color: #273750 !important; font-weight: 650; background: #ffffff !important; border-color: #dbe3ef !important; box-shadow: 0 1px 2px rgba(19, 37, 66, 0.03); }
+.login-provider-button:hover { color: #1554c0 !important; border-color: #8eb6f6 !important; background: #f8fbff !important; }
+.login-provider-button + .login-provider-button { margin-top: 10px; }
+.login-provider-button--feishu { position: relative; color: #ffffff !important; background: #3370ff !important; border-color: #3370ff !important; box-shadow: 0 8px 18px rgba(51, 112, 255, 0.22); }
+.login-provider-button--feishu:hover { color: #ffffff !important; background: #2864eb !important; border-color: #2864eb !important; }
+.login-provider-button__content { display: inline-flex; align-items: center; gap: 9px; }
+.login-provider-button__hint { position: absolute; right: 14px; color: rgba(255, 255, 255, 0.76); font-size: 11px; font-weight: 600; }
+.login-feishu-mark { display: inline-grid; width: 21px; height: 21px; place-items: center; color: #3370ff; font-size: 12px; font-weight: 800; line-height: 1; background: #ffffff; border-radius: 6px; }
+.login-auth-options .ant-divider { margin: 20px 0 18px; color: #8a95a8; font-size: 12px; }
+.login-development { padding: 16px; background: #f8fafc; border: 1px solid #e7edf5; border-radius: 10px; }
+.login-development__heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; color: #33435c; font-size: 13px; font-weight: 700; }
+.login-development__heading .ant-typography { font-size: 11px; font-weight: 500; }
+.login-card .login-development .ant-form { margin-top: 18px; }
 .login-card .ant-form-item-label > label { color: #42516a; font-size: 13px; font-weight: 650; }
 .login-card .ant-divider { margin: 24px 0 16px; border-color: #e7ebf1; }
 .login-card__note { display: block; color: #8792a4; font-size: 12px; line-height: 1.65; text-align: center; }
@@ -351,6 +485,14 @@ button, input, textarea, select { font: inherit; }
   .office-form-actions { align-items: stretch; }
   .office-form-actions .ant-btn { width: 100%; }
   .office-chart-legend { grid-template-columns: 1fr; }
+  .office-decision-hero { align-items: flex-start; flex-direction: column; gap: 18px; padding: 22px; }
+  .office-decision-hero h2 { font-size: 20px; }
+  .office-decision-hero__summary { grid-template-columns: auto auto; justify-content: start; min-width: 0; gap: 8px; padding: 8px 10px; }
+  .office-decision-hero__summary strong { font-size: 22px; }
+  .office-decision-card .ant-card-body { padding: 6px 16px; }
+  .office-decision-item { grid-template-columns: 34px minmax(0, 1fr); gap: 12px; min-height: 0; padding: 15px 0; }
+  .office-decision-item > .ant-btn { grid-column: 2; justify-self: start; margin-top: -3px; }
+  .office-insights-collapse .ant-collapse-content-box { padding: 16px !important; }
   .ant-card .ant-card-head { min-height: 52px; padding: 0 16px; }
   .ant-card .ant-card-body { padding: 16px; }
   .ant-table-wrapper .ant-table-thead > tr > th { padding-top: 10px !important; padding-bottom: 10px !important; }

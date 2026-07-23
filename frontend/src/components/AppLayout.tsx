@@ -2,99 +2,130 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import {
-  UploadOutlined,
-  CheckCircleOutlined,
-  ExperimentOutlined,
-  DashboardOutlined,
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
-  ThunderboltOutlined,
-  VideoCameraOutlined,
   AuditOutlined,
+  ApiOutlined,
+  CheckCircleOutlined,
   ClusterOutlined,
-  GlobalOutlined,
-  SyncOutlined,
-  ShopOutlined,
+  DashboardOutlined,
   DatabaseOutlined,
-  UserOutlined,
+  ExperimentOutlined,
+  FlagOutlined,
+  GlobalOutlined,
   LogoutOutlined,
+  MenuFoldOutlined,
   MenuOutlined,
+  MenuUnfoldOutlined,
+  ShopOutlined,
+  SettingOutlined,
+  SyncOutlined,
+  ThunderboltOutlined,
+  UploadOutlined,
+  UserOutlined,
+  VideoCameraOutlined,
+  ClockCircleOutlined,
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 import { Avatar, Badge, Button, Drawer, Dropdown, Layout, Menu, Spin, Tag } from "antd";
 import Image from "next/image";
 import React, { useEffect, useMemo, useState } from "react";
+import { getAppRole, getRoleLabel, hasAnyPermission, type AppRole } from "@/lib/access";
 import { useUIStore } from "@/stores";
-import { useCurrentUser } from "@/hooks";
+import { useCurrentUser, useTenantContext } from "@/hooks";
+import type { TenantContext, UserResponse } from "@/types";
 import ErrorBoundary from "./ErrorBoundary";
 
 const { Sider, Header, Content } = Layout;
 
-const menuItems: MenuProps["items"] = [
+type NavigationIdentity = UserResponse | TenantContext | undefined;
+
+type NavigationItem = {
+  key: string;
+  icon: React.ReactNode;
+  label: string;
+  permissions?: string[];
+  roles?: AppRole[];
+};
+
+type NavigationGroup = {
+  label: string;
+  children: NavigationItem[];
+};
+
+const navigationGroups: NavigationGroup[] = [
   {
-    type: "group",
-    label: "商品工作台",
+    label: "日常运营",
     children: [
-      { key: "/publish", icon: <UploadOutlined />, label: "发品工作台" },
-      { key: "/prediction", icon: <ThunderboltOutlined />, label: "预测决策" },
-      { key: "/products", icon: <ShopOutlined />, label: "商品管理" },
+      { key: "/campaigns", icon: <FlagOutlined />, label: "运营活动", roles: ["admin", "operator", "analyst", "viewer"] },
+      { key: "/dashboard", icon: <DashboardOutlined />, label: "运营首页" },
+      { key: "/products", icon: <ShopOutlined />, label: "商品管理", permissions: ["product:read"] },
+      { key: "/publish", icon: <UploadOutlined />, label: "发品工作台", permissions: ["generation:run"] },
+      { key: "/review", icon: <CheckCircleOutlined />, label: "审核工作台", permissions: ["review:read"] },
+      { key: "/tasks", icon: <ClockCircleOutlined />, label: "任务中心", permissions: ["generation:run", "workflow:manage"] },
+      { key: "/video-generate", icon: <VideoCameraOutlined />, label: "视频生成", permissions: ["generation:run"] },
     ],
   },
   {
-    type: "group",
-    label: "质量与审核",
+    label: "经营决策",
     children: [
-      { key: "/review", icon: <CheckCircleOutlined />, label: "审核工作台" },
-      { key: "/fairness", icon: <GlobalOutlined />, label: "公平性分析" },
-      { key: "/supplier", icon: <ShopOutlined />, label: "供应商分析" },
+      { key: "/prediction", icon: <ThunderboltOutlined />, label: "预测决策", permissions: ["analytics:read"] },
+      { key: "/experiments", icon: <ExperimentOutlined />, label: "A/B 实验", permissions: ["experiment:read"] },
+      { key: "/supplier", icon: <ShopOutlined />, label: "供应商协同", permissions: ["supplier:read"] },
     ],
   },
   {
-    type: "group",
-    label: "增长实验",
+    label: "分析与治理",
     children: [
-      { key: "/experiments", icon: <ExperimentOutlined />, label: "A/B 实验中心" },
-      { key: "/flywheel", icon: <SyncOutlined />, label: "数据飞轮" },
-    ],
-  },
-  {
-    type: "group",
-    label: "经营洞察",
-    children: [
-      { key: "/dashboard", icon: <DashboardOutlined />, label: "数据看板" },
-      { key: "/clustering", icon: <ClusterOutlined />, label: "聚类分析" },
-      { key: "/metrics", icon: <DatabaseOutlined />, label: "指标数据管理" },
-    ],
-  },
-  {
-    type: "group",
-    label: "系统设置",
-    children: [
-      { key: "/video-generate", icon: <VideoCameraOutlined />, label: "视频生成" },
-      { key: "/audit-logs", icon: <AuditOutlined />, label: "审计日志" },
+      { key: "/fairness", icon: <GlobalOutlined />, label: "公平性分析", permissions: ["analytics:read"], roles: ["admin", "operator", "analyst"] },
+      { key: "/clustering", icon: <ClusterOutlined />, label: "聚类分析", permissions: ["analytics:read"], roles: ["admin", "operator", "analyst"] },
+      { key: "/metrics", icon: <DatabaseOutlined />, label: "指标与模型", roles: ["admin"] },
+      { key: "/flywheel", icon: <SyncOutlined />, label: "数据飞轮", permissions: ["model:manage"] },
+      { key: "/audit-logs", icon: <AuditOutlined />, label: "审计日志", permissions: ["audit:read"] },
+      { key: "/integrations", icon: <ApiOutlined />, label: "系统集成", roles: ["admin"] },
+      { key: "/settings", icon: <SettingOutlined />, label: "运行时配置", roles: ["admin"] },
     ],
   },
 ];
 
 const pageTitles: Record<string, string> = {
+  "/campaigns": "运营活动",
+  "/dashboard": "运营首页",
   "/publish": "发品工作台",
   "/prediction": "预测决策",
   "/products": "商品管理",
+  "/tasks": "任务中心",
   "/review": "审核工作台",
   "/fairness": "公平性分析",
-  "/supplier": "供应商分析",
-  "/experiments": "A/B 实验中心",
+  "/supplier": "供应商协同",
+  "/experiments": "A/B 实验",
   "/flywheel": "数据飞轮",
-  "/dashboard": "数据看板",
   "/clustering": "聚类分析",
-  "/metrics": "指标数据管理",
+  "/metrics": "指标与模型",
   "/video-generate": "视频生成",
   "/audit-logs": "审计日志",
+  "/integrations": "系统集成",
+  "/settings": "运行时配置",
 };
 
-function UserProfile({ collapsed = false }: { collapsed?: boolean }) {
+function canShowNavigationItem(item: NavigationItem, identity: NavigationIdentity): boolean {
+  const role = getAppRole(identity);
+  if (item.roles && !item.roles.includes(role)) return false;
+  return !item.permissions || hasAnyPermission(identity, item.permissions);
+}
+
+function buildMenuItems(identity: NavigationIdentity): MenuProps["items"] {
+  return navigationGroups
+    .map((group) => ({
+      type: "group" as const,
+      label: group.label,
+      children: group.children
+        .filter((item) => canShowNavigationItem(item, identity))
+        .map(({ key, icon, label }) => ({ key, icon, label })),
+    }))
+    .filter((group) => group.children.length > 0);
+}
+
+function UserProfile({ user, isLoading, collapsed = false }: { user?: UserResponse; isLoading: boolean; collapsed?: boolean }) {
   const router = useRouter();
-  const { data: user, isLoading } = useCurrentUser();
 
   const handleLogout = () => {
     localStorage.removeItem("shelook_auth");
@@ -124,7 +155,7 @@ function UserProfile({ collapsed = false }: { collapsed?: boolean }) {
           <span className="office-user__meta">
             <span className="office-user__name">{user?.username ?? "当前用户"}</span>
             <Tag variant="filled" color={user?.role === "admin" ? "blue" : "default"}>
-              {user?.role === "admin" ? "管理员" : "协作成员"}
+              {getRoleLabel(user)}
             </Tag>
           </span>
         )}
@@ -137,6 +168,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { sidebarCollapsed, toggleSidebar } = useUIStore();
+  const { data: tenant } = useTenantContext();
+  const { data: user, isLoading: userLoading } = useCurrentUser();
   const [mounted, setMounted] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -156,11 +189,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     }
   }, [mounted, pathname, router]);
 
-  const selectedKey = `/${pathname?.split("/")[1] || "publish"}`;
-  const currentTitle = useMemo(
-    () => pageTitles[selectedKey] ?? "运营工作台",
-    [selectedKey],
-  );
+  const selectedKey = `/${pathname?.split("/")[1] || "dashboard"}`;
+  const currentTitle = useMemo(() => pageTitles[selectedKey] ?? "视觉运营中心", [selectedKey]);
+  const menuItems = useMemo(() => buildMenuItems(user ?? tenant), [tenant, user]);
   const collapsed = sidebarCollapsed;
   const siderWidth = collapsed ? 80 : 264;
 
@@ -199,7 +230,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             />
           </div>
 
-          <div className="office-nav-label">商品视觉运营</div>
+          <div className="office-nav-label">视觉经营决策</div>
           <Menu
             mode="inline"
             theme="dark"
@@ -210,7 +241,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           />
 
           <div className="office-sider-footer">
-            <UserProfile collapsed={collapsed} />
+            <UserProfile user={user} isLoading={userLoading} collapsed={collapsed} />
           </div>
         </Sider>
       )}
@@ -233,13 +264,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               />
             )}
             <div>
-              <span className="office-header__eyebrow">SHELOOK · 视觉运营中心</span>
+              <span className="office-header__eyebrow">
+                {tenant ? `${tenant.tenant_name} · ${tenant.tenant_id}` : "SHELOOK · 视觉运营中心"}
+              </span>
               <strong>{currentTitle}</strong>
             </div>
           </div>
           <div className="office-header__status">
             <Badge status="processing" text="服务已连接" />
-            {!isMobile && <span>数据与业务链路实时同步</span>}
+            {!isMobile && <span>经营数据与工作流实时同步</span>}
           </div>
         </Header>
 
@@ -264,7 +297,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           className="office-mobile-menu"
         />
         <div className="office-mobile-user">
-          <UserProfile />
+          <UserProfile user={user} isLoading={userLoading} />
         </div>
       </Drawer>
     </Layout>

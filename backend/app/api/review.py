@@ -54,6 +54,7 @@ async def auto_review_image(
         image_url=image_url,
         product_category=product_category,
         product_title=product_title,
+        db=db,
     )
 
     # 写审计日志

@@ -6,6 +6,7 @@ WebSocket 通知走的 Redis Pub/Sub，方便多 worker 扩容。
 import asyncio
 import uuid
 from contextlib import suppress
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import (
@@ -21,9 +22,13 @@ from fastapi import (
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.core.logging import logger
+from app.core.tenant import get_current_tenant_id
 from app.db.session import get_db
 from app.models.image import GeneratedImage, ImageScheme, ReviewStatus
+from app.models.release_control import AIUsageRecord, UsageStatus
+from app.models.workflow import WorkflowTask
 from app.schemas import (
     GenerateRequest,
     GenerateResponse,
@@ -33,8 +38,70 @@ from app.schemas import (
     VisionRewardRequest,
     VisionRewardResponse,
 )
+from app.services.workflow_service import create_task_with_outbox
 
 router = APIRouter(prefix="/api/generation", tags=["Generation"])
+
+
+def _require_remote_image_url(image_path: str) -> None:
+    """Public API callers must never make the service read arbitrary local files."""
+    if not image_path.startswith(("http://", "https://")):
+        raise HTTPException(status_code=422, detail="image_path 必须是受控的 http/https 图片 URL")
+
+
+async def _enforce_generation_quota(db: AsyncSession, estimated_cost_cents: int) -> None:
+    """Serialize generation admission per tenant and enforce active/monthly limits."""
+    from sqlalchemy import func
+
+    from app.models.organization import TenantQuota
+    from app.models.workflow import WorkflowTaskStatus
+
+    tenant_id = get_current_tenant_id()
+    quota = await db.scalar(
+        select(TenantQuota).where(TenantQuota.tenant_id == tenant_id).with_for_update()
+    )
+    if quota is None:
+        return
+
+    active_statuses = (
+        WorkflowTaskStatus.CREATED,
+        WorkflowTaskStatus.QUEUED,
+        WorkflowTaskStatus.RETRYING,
+        WorkflowTaskStatus.RUNNING,
+        WorkflowTaskStatus.WAITING_EXTERNAL,
+        WorkflowTaskStatus.WAITING_HUMAN,
+    )
+    active_tasks = await db.scalar(
+        select(func.count())
+        .select_from(WorkflowTask)
+        .where(
+            WorkflowTask.task_type == "image_generation",
+            WorkflowTask.status.in_(active_statuses),
+        )
+    )
+    if (active_tasks or 0) >= quota.generation_concurrency:
+        raise HTTPException(status_code=429, detail="当前租户的生成并发配额已用尽，请稍后重试")
+
+    now = datetime.now(UTC)
+    month_start = datetime(now.year, now.month, 1)
+    if quota.monthly_generation_limit is not None:
+        monthly_images = await db.scalar(
+            select(func.count())
+            .select_from(GeneratedImage)
+            .where(GeneratedImage.created_at >= month_start)
+        )
+        if (monthly_images or 0) >= quota.monthly_generation_limit:
+            raise HTTPException(status_code=429, detail="当前租户本月生成额度已用尽")
+
+    if quota.monthly_budget_cents is not None:
+        reserved_cost = await db.scalar(
+            select(func.coalesce(func.sum(AIUsageRecord.reserved_cost_cents), 0)).where(
+                AIUsageRecord.created_at >= month_start,
+                AIUsageRecord.status != UsageStatus.CANCELLED,
+            )
+        )
+        if int(reserved_cost or 0) + estimated_cost_cents > quota.monthly_budget_cents:
+            raise HTTPException(status_code=429, detail="当前租户本月 AI 预算不足")
 
 
 @router.post("", response_model=GenerateResponse, status_code=202)
@@ -57,7 +124,24 @@ async def generate_images(
     if request_id is None:
         request_id = str(uuid.uuid4())
 
+    idempotency_key = request.headers.get("idempotency-key") or f"generation:{request_id}:{body.scheme_id}"
+    existing_task_result = await db.execute(
+        select(WorkflowTask).where(WorkflowTask.idempotency_key == idempotency_key)
+    )
+    existing_task = existing_task_result.scalar_one_or_none()
+    if existing_task is not None:
+        return GenerateResponse(
+            task_id=existing_task.id,
+            image_id=int(existing_task.resource_id),
+            status=existing_task.status,
+        )
+
     task_id = str(uuid.uuid4())
+    from app.services.feature_flags import require_feature_enabled
+
+    await require_feature_enabled(db, "ai_generation")
+    estimated_cost_cents = settings.IMAGE_GENERATION_RESERVATION_CENTS
+    await _enforce_generation_quota(db, estimated_cost_cents)
 
     # 创建生成记录（先占位，URL 后续填充）
     image = GeneratedImage(
@@ -75,31 +159,53 @@ async def generate_images(
     await db.flush()
     await db.refresh(image)
 
+    event_payload = {
+        "workflow_task_id": task_id,
+        "tenant_id": image.tenant_id,
+        "image_id": image.id,
+        "scheme_id": body.scheme_id,
+        "market_variant": body.market_variant,
+        "generation_params": body.params,
+        "request_id": request_id,
+    }
+    await create_task_with_outbox(
+        db,
+        task_id=task_id,
+        task_type="image_generation",
+        resource_type="generated_image",
+        resource_id=str(image.id),
+        idempotency_key=idempotency_key,
+        request_id=request_id,
+        payload=event_payload,
+        event_type="generation.requested",
+    )
+
+    # create_task_with_outbox 已 flush 工作流任务；此后再写入用量记录，确保外键始终有效。
+    params = body.params or {}
+    db.add(
+        AIUsageRecord(
+            workflow_task_id=task_id,
+            idempotency_key=idempotency_key,
+            operation="image_generation",
+            provider=str(params.get("provider") or "configured-default")[:64],
+            reserved_cost_cents=estimated_cost_cents,
+            status=UsageStatus.RESERVED,
+        )
+    )
+
     # 必须先 commit，否则 Celery worker 读到不存在
     await db.commit()
 
-    # 丢 Celery 任务
+    # 触发 Outbox 发布器。发布失败时事件仍在数据库中，Beat 会自动重试。
     try:
-        from app.tasks.generation_task import generate_single_image
-        generate_single_image.apply_async(
-            kwargs={
-                "image_id": image.id,
-                "scheme_id": body.scheme_id,
-                "market_variant": body.market_variant,
-                "generation_params": body.params,
-                "request_id": request_id,
-            },
-            task_id=task_id,
-        )
+        from app.tasks.outbox_task import dispatch_outbox_events
+
+        dispatch_outbox_events.delay()
     except Exception as e:
-        image.generation_status = "failed"
-        image.error_message = str(e)[:1000]
-        await db.commit()
-        logger.error("Celery 任务提交失败", error=str(e))
-        raise HTTPException(status_code=503, detail="任务队列暂不可用") from e
+        logger.warning("Outbox 发布器唤醒失败，等待定时重试", error=str(e), task_id=task_id)
 
     logger.info(
-        "生图任务已提交",
+        "生图任务已可靠提交",
         image_id=image.id,
         task_id=task_id,
         scheme_id=body.scheme_id,
@@ -202,6 +308,7 @@ async def check_image_text_match(
     """图片-文本匹配校验（CLIP），看看生图跟商品描述对得上不"""
     from app.services.image_text_matcher import check_image_text_match as _check
 
+    _require_remote_image_url(body.image_path)
     result = await _check(
         image_path=body.image_path,
         product_title=body.product_title,
@@ -218,6 +325,7 @@ async def evaluate_aesthetic(
     """审美评估 —— 参考 VisionReward 维度，目前用启发式规则 + CLIP zero-shot"""
     from app.services.vision_reward import evaluate_vision_reward
 
+    _require_remote_image_url(body.image_path)
     result = await evaluate_vision_reward(
         image_path=body.image_path,
         dimensions=body.dimensions,

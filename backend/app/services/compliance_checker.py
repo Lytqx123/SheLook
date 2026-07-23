@@ -103,7 +103,7 @@ def check_brand_compliance(
             if not color_result["passed"]:
                 violations.append({
                     "rule": "color_palette",
-                    "description": f"色板覆盖率低于阈值",
+                    "description": "色板覆盖率低于阈值",
                 })
 
             # 水印
@@ -162,7 +162,7 @@ def check_brand_compliance(
 
 def check_sensitive_content(image_path: str | Path) -> dict:
     """敏感内容检测：NSFW + CLIP Zero-shot 分类 + 像素统计。
-    
+
     双层检测：NSFW CLIP 分类 + 像素统计分析。
     这段是跟 fairness 那边一起写的，阈值是拍脑袋定的，后续需要校准。
     """

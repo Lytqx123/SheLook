@@ -1,6 +1,6 @@
 "use client";
 
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import dayjs from "dayjs";
 import {
   Card,
@@ -32,7 +32,9 @@ import { useExperiment, useExperimentBreakdown } from "@/hooks";
 export default function ExperimentDetailContent() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const experimentId = Number(params.id);
+  const campaignId = searchParams.get("campaignId");
 
   const { data: report, isPending, error } = useExperiment(experimentId);
   // 按 date 维度拉取真实 CTR 时序数据，替代 Math.random() 假数据
@@ -101,9 +103,9 @@ export default function ExperimentDetailContent() {
         <div className="flex items-center gap-4" style={{ marginBottom: 20 }}>
           <Button
             icon={<ArrowLeftOutlined />}
-            onClick={() => router.push("/experiments")}
+            onClick={() => router.push(campaignId ? `/campaigns?selected=${encodeURIComponent(campaignId)}` : "/experiments")}
           >
-            返回
+            {campaignId ? "返回活动" : "返回"}
           </Button>
           <div>
             <h2 className="text-xl font-bold">实验详情</h2>
@@ -271,6 +273,18 @@ export default function ExperimentDetailContent() {
                   : `版本A 的 CTR 比 版本B 高 ${Math.abs(lift).toFixed(1)}%，建议继续使用版本A。`)
                 : `统计结论已生成，但 CTR 数据尚在收集中，请稍后再查看详细对比。`}
             </p>
+          </Card>
+        )}
+
+        {campaignId && report.status === "completed" && (
+          <Card className="border-indigo-200 bg-indigo-50" style={{ marginTop: 20 }}>
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h3 className="font-bold text-indigo-700 mb-1">将实验结果反馈给下一次决策</h3>
+                <p className="text-sm text-indigo-600">在活动复盘中确认胜出策略、适用边界和证据强度，让真实经营结果持续改进后续推荐。</p>
+              </div>
+              <Button type="primary" onClick={() => router.push(`/flywheel?campaignId=${encodeURIComponent(campaignId)}`)}>进入活动复盘</Button>
+            </div>
           </Card>
         )}
       </div>

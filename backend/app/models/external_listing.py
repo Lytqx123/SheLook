@@ -5,13 +5,15 @@ from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import Base
+from app.db.base import Base, TenantScopedMixin
 
 
-class ExternalListingMapping(Base):
+class ExternalListingMapping(TenantScopedMixin, Base):
     __tablename__ = "external_listing_mappings"
     __table_args__ = (
-        UniqueConstraint("platform", "external_id", name="uq_external_listing_platform_id"),
+        UniqueConstraint(
+            "tenant_id", "platform", "external_id", name="uq_external_listing_platform_id"
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

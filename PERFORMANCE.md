@@ -1,121 +1,142 @@
-# SheLook 性能测试
+# SheLook 性能与发布验证
 
-这边只记录压测方法、采集口径和结果记录要求。QPS 和延迟数据需要在目标环境跑完再填。
+> 文档基线：2026-07-23。性能结论只在明确的环境、数据规模和压测场景内成立；不替代生产容量承诺。
 
-> TODO: 等 staging 环境跑完一轮正式压测，把基线数据贴过来
+## 说明
 
-## 当前状态
+本文件记录当前仓库提供的性能验证工具、指标口径和发布验证方法。仓库没有发布可泛化的吞吐量、延迟或“可支持多少用户”的实测结论；任何容量判断都必须在目标硬件、目标配置、目标数据规模和真实外部依赖条件下重新测试。
 
-- 仓库里有 Locust 场景：`scripts/locustfile.py`
-- 默认只跑只读请求，不会创建或修改数据
-- 预测和生图默认关闭，需要显式开 `SHELOOK_ENABLE_MUTATIONS`
-- 目前没有可以作为发布承诺的正式基准结果——容量得在目标硬件和配置下自己测
+默认压测场景以只读 API 为主，不会创建商品、预测记录或生成任务。预测和生成写入场景必须显式开启，且只应在隔离测试环境中运行。
 
-## 准备环境
+## 2026-07-23 运行冒烟记录
 
-先确保所有服务健康：
+本机 development Compose 环境已完成部署级冒烟：数据库迁移处于 `018`，13 个 Compose 服务均健康，API 的存活与就绪检查通过，且就绪检查中的 PostgreSQL、Redis、MinIO 均返回 `ok`；Nginx 反向代理下的同一就绪端点也通过。前端生产构建、后端 Ruff/编译检查、79 项后端回归测试、完整性/RLS 门禁和连续 outbox 分发均已通过。这个记录只证明当前代码与本机依赖能够启动、连通和执行基础任务，不能替代本文件所要求的目标环境压测、数据一致性报告和发布门禁。
 
-```bash
-docker compose up -d
+## 当前验证工具
+
+| 工具 | 位置 | 用途 |
+| --- | --- | --- |
+| Locust | scripts/locustfile.py | 带认证的读多写少场景；默认覆盖健康检查、看板、商品、实验、审核、审计和模型版本查询。 |
+| 轻量并发脚本 | backend/scripts/phase6/run_read_load.py | 无额外压测依赖的只读并发冒烟，可产出 JSON 报告。 |
+| 数据一致性脚本 | backend/scripts/phase6/verify_data_integrity.py | 检查租户外键、跨租户关系、配额和 RLS。 |
+| 发布门禁聚合 | backend/scripts/phase6/release_gate.py | 汇总 Locust 或轻量压测报告与一致性报告，生成可审计的门禁结论。 |
+| 运行监控 | Prometheus、Grafana、Flower | 查看 API 指标、任务队列、容器状态和任务执行状态。 |
+
+## 运行前准备
+
+先通过根目录启动脚本准备环境，并确认基础健康检查通过：
+
+~~~powershell
+.\setup.ps1 -Env dev
 docker compose ps
-```
+Invoke-WebRequest http://localhost:8000/api/health
+~~~
 
-装性能测试依赖：
+Locust 依赖在后端 perf 可选依赖中：
 
-```bash
-cd backend
+~~~powershell
+Set-Location backend
 uv sync --extra perf
-cd ..
-```
+~~~
 
-开发环境 Locust 可以自动调 `/api/auth/token` 拿 token。生产/OIDC 必须通过 `SHELOOK_TOKEN` 传入 token。
+开发环境且认证未启用时，Locust 会请求 /api/auth/token 取得开发令牌。企业认证环境必须自行提供有效 JWT：
 
-PowerShell：
+~~~powershell
+Set-Item Env:SHELOOK_TOKEN "<JWT>"
+Set-Item Env:SHELOOK_TENANT_ID "<tenant-id>"
+~~~
 
-```powershell
-$env:SHELOOK_TOKEN = '<JWT>'
-backend\.venv\Scripts\locust.exe -f scripts\locustfile.py --host http://127.0.0.1:8000
-```
+## Locust 场景
 
-Bash：
+从 backend 目录启动：
 
-```bash
-export SHELOOK_TOKEN='<JWT>'
-backend/.venv/bin/locust -f scripts/locustfile.py --host http://127.0.0.1:8000
-```
+~~~powershell
+uv run locust -f ..\scripts\locustfile.py --host http://127.0.0.1:8000
+~~~
 
-打开 Locust 页面后按计划设并发、增长速率和持续时间。
+默认只读用户会请求：
 
-## 场景
+- /api/health
+- /api/dashboard/summary
+- /api/dashboard/ctr_trend
+- /api/products
+- /api/experiments
+- /api/review/queue
+- /api/audit/logs
+- /api/prediction/model-versions
 
-### 默认只读
+健康检查中的 /api/health/ready 会同步检查数据库、Redis 和 MinIO，不应作为普通高频压测接口。
 
-`ReadOnlyUser` 覆盖：
+### 可选写入场景
 
-- `/api/health`
-- `/api/dashboard/summary`
-- `/api/dashboard/ctr_trend`
-- `/api/products`
-- `/api/experiments`
-- `/api/review/queue`
-- `/api/audit/logs`
-- `/api/prediction/model-versions`
+只有在隔离环境中，且已确认外部模型计费、数据清理和任务队列影响后，才可启用预测或生成：
 
-`/api/health/ready` 会同步检查数据库、Redis 和 MinIO，别当普通接口压测——压测前后各调一次就行。
+~~~powershell
+Set-Item Env:SHELOOK_ENABLE_MUTATIONS true
+Set-Item Env:SHELOOK_IMAGE_ID 123
+Set-Item Env:SHELOOK_SCHEME_ID 456
+uv run locust -f ..\scripts\locustfile.py --host http://127.0.0.1:8000
+~~~
 
-### 可选写入
+设置 SHELOOK_IMAGE_ID 后会启用预测写入；设置 SHELOOK_SCHEME_ID 后会提交生成任务。429、503 和 504 会被记录为失败，不能被解释为系统成功。
 
-只在隔离测试环境启用：
+## 轻量只读并发检查
 
-```powershell
-$env:SHELOOK_ENABLE_MUTATIONS = 'true'
-$env:SHELOOK_IMAGE_ID = '123'
-$env:SHELOOK_SCHEME_ID = '456'
-```
+轻量脚本适合本地或 CI 冒烟。它默认访问存活探针、看板摘要和商品列表，并输出请求数、错误率、平均延迟、P95、P99 和 RPS：
 
-- 设了 `SHELOOK_IMAGE_ID` → 启用预测
-- 设了 `SHELOOK_SCHEME_ID` → 启用生图提交
-- 429/503/504 统一记失败，不会伪装成成功
+~~~powershell
+Set-Location backend
+uv run python -m scripts.phase6.run_read_load --base-url http://127.0.0.1:8000 --concurrency 10 --duration-seconds 30 --output ..\artifacts\read-load.json
+~~~
 
-## 建议测试顺序
+如需在认证环境运行，可追加 --tenant-id 和 --token 参数。压测报告应与测试时的镜像版本、环境变量、数据规模和外部服务状态一起保存。
 
-1. **冒烟**：1~2 用户跑 2 分钟，确认没认证/路由/数据错误
-2. **基线**：固定并发跑至少 10 分钟，记稳定区间
-3. **阶梯**：逐级加并发，每级 5~10 分钟，找延迟和错误率开始恶化的点
-4. **稳定性**：目标并发达 1~4 小时，观察内存、连接池、Celery 队列和外部错误
-5. **恢复**：停流量后确认队列归零、连接数恢复、服务健康
+## 指标口径
 
-不要在真实生产数据环境开写入场景，也不要在没确认供应商计费规则的时候压生图或视频接口。
+Prometheus 当前采集后端 /metrics。重点指标包括：
 
-## 监控口径
+| 指标 | 含义 |
+| --- | --- |
+| shelook_requests_total | 按方法、路由和状态码统计的请求总数。 |
+| shelook_request_latency_seconds | 按方法和路由统计的请求延迟直方图。 |
+| shelook_active_requests | 当前活跃请求数。 |
+| shelook_celery_queue_length | 按队列统计的待处理任务数。 |
+| shelook_generation_task_duration_seconds | 按生成提供方和状态统计的生成任务耗时。 |
+| shelook_quality_pass_rate | 按审核层级和结论统计的质量通过率。 |
+| shelook_model_prediction_drift | 预测 CTR 与实际 CTR 的漂移度量。 |
 
-Locust 记录：
-- 请求数、RPS、失败率
-- P50/P90/P95/P99 和最大延迟
-- 按接口分的状态码和错误原因
+除 API 指标外，发布评估还应观察容器 CPU/内存、数据库连接池、Redis、对象存储、任务积压、外部服务限流、超时和费用。演示数据与开发模式的占位生成不能作为生产容量证据。
 
-Prometheus/Grafana 同期看：
-- `shelook_requests_total`
-- `shelook_request_latency_seconds`
-- `shelook_active_requests`
-- `shelook_celery_queue_length`
-- `shelook_generation_task_duration_seconds`
-- 容器 CPU、内存、重启次数、数据库连接池状态
+## 发布门禁
 
-外部模型/供应商接口单独记录调用次数、限流、超时、失败率和费用。mock 模式的数据不能当真实容量。
+发布门禁脚本可以读取 Locust 聚合 CSV 或轻量压测 JSON，并与数据一致性报告合并：
+
+~~~powershell
+Set-Location backend
+uv run python -m scripts.phase6.verify_data_integrity --output ..\artifacts\integrity.json
+uv run python -m scripts.phase6.release_gate --load-report ..\artifacts\read-load.json --integrity-report ..\artifacts\integrity.json --output ..\artifacts\release-gate.json
+~~~
+
+脚本默认要求至少 1,000 个请求、错误率不高于 0.5%、P95 不高于 500ms，并且一致性报告通过。这些只是脚本的默认参数，不是已经对外承诺或已经验证的系统 SLO；上线团队应根据业务优先级、环境预算、数据规模和外部依赖调整阈值。
+
+## 当前已知验证限制
+
+`backend/scripts/phase6/verify_data_integrity.py` 以迁移头 `018` 为基线，覆盖既有活动表以及经营事实、真实效果事实、预测快照和反馈标签的租户外键、关联一致性和 RLS 检查。它是发布门禁的一个输入，而不是容量结论：仍需结合目标环境的权限、备份恢复、外部服务限流、告警和原始压测报告判断是否可上线。
+
+生产与预发 Compose 覆盖会关闭 `ALLOW_GENERATION_MOCKS`、移除源码挂载和直接诊断端口，并要求 digest 固定的镜像、C2PA/指标 secret 文件与受控环境配置。压测不得使用演示数据或占位生成来宣称生产容量；写入、生成和第三方通道的场景必须在隔离环境按实际凭据、预算和限额单独验证。
 
 ## 结果记录模板
 
-每次正式测完至少记这些：
+每次正式测试至少保留以下信息：
 
-| 项目 | 内容 |
-|---|---|
-| 日期与版本 | Git commit、镜像版本、配置版本 |
-| 环境 | CPU、内存、磁盘、OS、Docker 版本 |
-| 服务配置 | Uvicorn/Celery 并发、连接池、限流、模型 |
-| 数据规模 | 商品、图片、实验、指标记录数量 |
-| Locust 参数 | 用户数、增长速率、持续时间、启用场景 |
-| 结果 | RPS、P50/P95/P99、错误率、资源峰值 |
-| 异常 | 失败码、日志关键信息、队列积压和恢复时间 |
+| 项目 | 必填内容 |
+| --- | --- |
+| 版本 | Git 提交、镜像标签、数据库迁移版本。 |
+| 环境 | CPU、内存、磁盘、网络、Docker/操作系统版本。 |
+| 配置 | API Worker、Celery 并发、数据库连接池、限流、认证和外部服务配置。 |
+| 数据 | 租户数、商品数、素材数、实验数、指标记录量和对象存储规模。 |
+| 场景 | 并发、爬升速率、持续时长、接口比例、是否包含写入任务。 |
+| 结果 | RPS、P50/P95/P99、错误率、资源峰值、任务积压与恢复时间。 |
+| 异常 | 状态码、错误摘要、外部依赖状态、降级/恢复动作和结论。 |
 
-验收阈值以实际业务 SLO、硬件预算和供应商额度为准。别在没有环境说明的情况下把单次结果写成"项目通用能力"。
+在没有完整环境说明和原始报告的情况下，不应把单次结果描述为项目的通用性能能力。

@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shelook-api
+  labels:
+    app.kubernetes.io/name: shelook-api
+    app.kubernetes.io/component: api
+spec:
+  replicas: 3
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: shelook-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: shelook-api
+        app.kubernetes.io/component: api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: shelook-backend
+          command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers=1"]
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: shelook-runtime-config
+            - secretRef:
+                name: shelook-runtime
+          volumeMounts:
+            - name: model-artifacts
+              mountPath: /app/models
+            - name: runtime-tmp
+              mountPath: /tmp
+            - name: c2pa-signing
+              mountPath: /var/run/secrets/shelook/c2pa
+              readOnly: true
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          readinessProbe:
+            httpGet:
+              path: /api/health/ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /api/health/live
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 10"]
+      volumes:
+        - name: model-artifacts
+          persistentVolumeClaim:
+            claimName: shelook-model-artifacts
+        - name: runtime-tmp
+          emptyDir: {}
+        - name: c2pa-signing
+          secret:
+            secretName: shelook-c2pa
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shelook-api
+  labels:
+    app.kubernetes.io/name: shelook-api
+spec:
+  selector:
+    app.kubernetes.io/name: shelook-api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http

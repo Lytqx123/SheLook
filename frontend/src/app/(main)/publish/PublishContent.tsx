@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Steps, Button, App, Tag, Input, InputNumber, Select, Form, Card, Descriptions, Divider, Alert, Progress, Tooltip, Tabs, Upload, Empty, Image as AntImage } from "antd";
 import { InboxOutlined, CheckCircleOutlined, CloseCircleOutlined, SafetyCertificateOutlined, BulbOutlined, FileSearchOutlined, SearchOutlined, PictureOutlined } from "@ant-design/icons";
 import SchemeCard from "@/components/SchemeCard";
@@ -16,6 +17,7 @@ import {
   useGenerationStatus,
   useSearchByImage,
   useSearchByImageUpload,
+  useUpdateCampaign,
 } from "@/hooks";
 import { api } from "@/lib/api";
 import type { SchemeOut, FusionDimension, ImageSearchResponse, ImageSearchResult } from "@/types";
@@ -35,6 +37,8 @@ const FUSION_DIM_COLORS: Record<FusionDimension, string> = {
 };
 
 export default function PublishContent() {
+  const searchParams = useSearchParams();
+  const campaignId = searchParams.get("campaignId");
   const [step, setStep] = useState(0);
   const [productId, setProductId] = useState<number | null>(null);
   const [productImageUrl, setProductImageUrl] = useState<string>("");
@@ -57,6 +61,7 @@ export default function PublishContent() {
   const startGeneration = useStartGeneration();
   const searchByImageMutation = useSearchByImage();
   const searchByImageUploadMutation = useSearchByImageUpload();
+  const updateCampaign = useUpdateCampaign();
   const { message } = App.useApp();
 
   // 推荐方案（mutation data）
@@ -88,6 +93,22 @@ export default function PublishContent() {
       setProductImageUrl(values.image_url);
       setProductCategory(values.category);
       setTargetMarket(values.target_market);
+      if (campaignId) {
+        try {
+          await updateCampaign.mutateAsync({
+            campaignId,
+            body: {
+              product_id: result.id,
+              market: values.target_market,
+              current_stage: "strategy",
+              status: "in_progress",
+              next_step: "选择并确认本次活动的视觉方案。",
+            },
+          });
+        } catch {
+          message.warning({ content: "商品已创建，但活动关联稍后会自动同步", key: "create" });
+        }
+      }
       message.success({ content: `商品创建成功 (ID: ${result.id})`, key: "create" });
       setStep(1);
 
@@ -184,6 +205,22 @@ export default function PublishContent() {
       });
       if (ids.length > 0) {
         setTaskImageIds(ids);
+        if (campaignId) {
+          try {
+            await updateCampaign.mutateAsync({
+              campaignId,
+              body: {
+                scheme_ids: selectedSchemes.map((scheme) => scheme.id),
+                image_ids: ids,
+                current_stage: "review",
+                status: "waiting_review",
+                next_step: "先完成质量审核，再进入效果预测与投放验证。",
+              },
+            });
+          } catch {
+            message.warning("素材已提交，活动状态将在后台同步。");
+          }
+        }
         if (failCount > 0) {
           message.warning({
             content: `${ids.length} 个任务已启动，${failCount} 个提交失败`,
@@ -207,7 +244,9 @@ export default function PublishContent() {
   // 渲染
   return (
       <div className="space-y-6" style={{ maxWidth: 1280, margin: "0 auto" }}>
-        <PageHeader title="发品工作台" subtitle="创建商品 → AI推荐方案 → 智能生成 → 质检出品" />
+        <PageHeader title={campaignId ? "活动工作台" : "发品工作台"} subtitle={campaignId ? "围绕当前运营活动完成商品、视觉策略、素材生产与质量门禁。" : "创建商品 → AI推荐方案 → 智能生成 → 质检出品"} />
+
+        {campaignId && <Alert type="info" showIcon message="正在为视觉运营活动推进素材生产" description="完成质检后，请进入预测决策面板选择投放或 A/B 实验方案。" />}
 
         {/* 步骤条 */}
         <Card>
@@ -718,9 +757,21 @@ export default function PublishContent() {
                 key={imageId}
                 imageId={imageId}
                 productId={productId}
+                campaignId={campaignId}
                 publishing={publishing}
                 setPublishing={setPublishing}
                 onBack={() => setStep(1)}
+                onPublished={async () => {
+                  if (!campaignId) return;
+                  await updateCampaign.mutateAsync({
+                    campaignId,
+                    body: {
+                      current_stage: "prediction",
+                      status: "in_progress",
+                      next_step: "基于预测分、置信度与风险选择进入 A/B 实验的素材。",
+                    },
+                  });
+                }}
               />
             ))}
             <div className="flex justify-end gap-3">
@@ -763,15 +814,19 @@ function TaskGenerateProgress({ imageId }: { imageId: number }) {
 function TaskResultView({
   imageId,
   productId,
+  campaignId,
   publishing,
   setPublishing,
   onBack,
+  onPublished,
 }: {
   imageId: number;
   productId: number | null;
+  campaignId?: string | null;
   publishing: boolean;
   setPublishing: (v: boolean) => void;
   onBack: () => void;
+  onPublished?: () => Promise<void>;
 }) {
   const { data: genStatus } = useGenerationStatus(imageId, 3000);
   const { message } = App.useApp();
@@ -939,7 +994,15 @@ function TaskResultView({
               try {
                 message.loading({ content: "正在发布...", key: "publish" });
                 await api.publishProduct(productId);
-                message.success({ content: "已发布上线", key: "publish" });
+                if (onPublished) {
+                  try {
+                    await onPublished();
+                  } catch {
+                    message.warning({ content: "商品已发布，活动状态将在后台同步", key: "publish" });
+                    return;
+                  }
+                }
+                message.success({ content: campaignId ? "已发布，活动已进入预测决策阶段" : "已发布上线", key: "publish" });
               } catch {
                 message.error({ content: "发布失败，请重试", key: "publish" });
               } finally {

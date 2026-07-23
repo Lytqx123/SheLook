@@ -155,6 +155,59 @@ export interface GenerationStatus {
   c2pa_manifest?: string;
 }
 
+// 企业组织与异步工作流
+export interface TenantContext {
+  tenant_id: string;
+  tenant_name: string;
+  user_id: string;
+  username: string;
+  role: string;
+  permissions: string[];
+  unit_ids: string[];
+}
+
+export type WorkflowTaskStatus =
+  | "created"
+  | "queued"
+  | "running"
+  | "waiting_external"
+  | "waiting_human"
+  | "retrying"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+export interface WorkflowTask {
+  id: string;
+  task_type: string;
+  resource_type: string;
+  resource_id: string;
+  request_id?: string;
+  status: WorkflowTaskStatus;
+  priority: number;
+  attempt_count: number;
+  max_attempts: number;
+  result?: Record<string, unknown>;
+  error_code?: string;
+  error_message?: string;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+  updated_at: string;
+}
+
+export interface WorkflowTaskList {
+  items: WorkflowTask[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface WorkflowActionResponse {
+  task: WorkflowTask;
+  message: string;
+}
+
 // 审核
 
 export interface ReviewRequest {
@@ -439,6 +492,42 @@ export interface VideoProvidersResponse {
   providers: VideoProvider[];
 }
 
+export interface ProviderConfigField {
+  key: string;
+  label: string;
+  placeholder?: string | null;
+  required: boolean;
+}
+
+export interface ProviderConfigInput {
+  enabled: boolean;
+  config: Record<string, string>;
+  credentials?: Record<string, string>;
+}
+
+export interface ProviderConfig {
+  provider: "kling" | "runway" | "replicate" | "gemini" | "shopee" | "amazon";
+  display_name: string;
+  capabilities: string[];
+  credential_fields: ProviderConfigField[];
+  config_fields: ProviderConfigField[];
+  enabled: boolean;
+  status: "configured" | "incomplete" | "disabled" | string;
+  config: Record<string, string>;
+  credentials_configured: boolean;
+  credentials_fingerprint: string | null;
+  config_version: number;
+  updated_by: string | null;
+  updated_at: string | null;
+}
+
+export interface ProviderConfigValidation {
+  provider: ProviderConfig["provider"];
+  status: "configured" | "incomplete" | "disabled";
+  message: string;
+  config_version: number;
+}
+
 // 公平性分析
 
 export interface SkinToneItem {
@@ -574,7 +663,10 @@ export interface SupplierReportHistoryItem {
 export interface LoginRequest {
   user_id: string;
   username?: string;
-  role?: "admin" | "viewer";
+  role?: "admin" | "operator" | "reviewer" | "analyst" | "supplier" | "viewer";
+  tenant_id?: string;
+  permissions?: string[];
+  unit_ids?: string[];
 }
 
 export interface TokenResponse {
@@ -583,11 +675,22 @@ export interface TokenResponse {
   user_id: string;
   username: string;
   role: string;
+  tenant_id: string;
+  permissions: string[];
+  unit_ids: string[];
 }
 
 export interface AuthConfigResponse {
   auth_enabled: boolean;
-  mode: "oidc" | "development";
+  /** "oidc" is retained only while a rolling deployment may include an older API. */
+  mode: "oidc" | "enterprise" | "development";
+  login_methods?: AuthLoginMethod[];
+}
+
+export interface AuthLoginMethod {
+  id: "development_account" | "feishu" | "enterprise_sso";
+  label: string;
+  login_path: string;
 }
 
 export interface OIDCLoginResponse {
@@ -598,6 +701,9 @@ export interface UserResponse {
   user_id: string;
   username: string;
   role: string;
+  tenant_id: string;
+  permissions: string[];
+  unit_ids: string[];
 }
 
 // 以图搜图
@@ -770,4 +876,226 @@ export interface AuditLogDetail {
   ip_address: string | null;
   user_agent: string | null;
   created_at: string | null;
+}
+
+// 视觉运营活动：用一条可追溯的经营主线连接方案、素材、审核、预测、实验与复盘。
+export type CampaignStatus =
+  | "draft"
+  | "in_progress"
+  | "waiting_review"
+  | "experimenting"
+  | "learning"
+  | "active"
+  | "paused"
+  | "completed"
+  | "archived";
+
+export type CampaignStage =
+  | "brief"
+  | "strategy"
+  | "production"
+  | "planning"
+  | "generation"
+  | "review"
+  | "prediction"
+  | "experiment"
+  | "retrospective"
+  | "completed"
+  | "learning";
+
+export interface CampaignCreateRequest {
+  name: string;
+  market: string;
+  objective: string;
+  objective_metric?: string;
+  target_value?: number;
+  product_id?: number;
+  owner_id?: string;
+  description?: string;
+}
+
+export interface CampaignUpdateRequest {
+  name?: string;
+  market?: string;
+  objective?: string;
+  objective_metric?: string;
+  target_value?: number;
+  product_id?: number | null;
+  owner_id?: string | null;
+  description?: string | null;
+  status?: CampaignStatus;
+  current_stage?: CampaignStage;
+  scheme_ids?: number[];
+  image_ids?: number[];
+  experiment_ids?: number[];
+  recommended_action?: Record<string, unknown> | null;
+  next_step?: string | null;
+}
+
+export interface Campaign {
+  id: string;
+  name: string;
+  status: CampaignStatus;
+  current_stage: CampaignStage;
+  product_id?: number | null;
+  market: string;
+  objective: string;
+  objective_metric?: string | null;
+  target_value?: number | null;
+  owner_id?: string | null;
+  description?: string | null;
+  scheme_ids?: number[];
+  image_ids?: number[];
+  experiment_ids?: number[];
+  recommended_action?: Record<string, unknown> | null;
+  next_step?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CampaignList {
+  items: Campaign[];
+  total: number;
+  page?: number;
+  page_size?: number;
+}
+
+export interface CampaignSummary {
+  total_images?: number;
+  approved_images?: number;
+  pending_reviews?: number;
+  prediction_count?: number;
+  experiments_total?: number;
+  experiments_running?: number;
+  avg_predicted_ctr?: number | null;
+  avg_actual_ctr?: number | null;
+  total_revenue?: number | null;
+  [key: string]: unknown;
+}
+
+export interface CampaignTimelineItem {
+  id?: string;
+  type?: string;
+  title: string;
+  description?: string;
+  status?: string;
+  occurred_at?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CampaignInsight {
+  id: string;
+  insight_type: "strategy_validated" | "strategy_rejected" | "learning" | "recommendation_update" | string;
+  title: string;
+  summary: string;
+  confidence?: number | null;
+  evidence?: Record<string, unknown> | null;
+  created_at?: string;
+}
+
+export interface CampaignDetail {
+  campaign: Campaign;
+  summary: CampaignSummary;
+  timeline: CampaignTimelineItem[];
+  insights: CampaignInsight[];
+}
+
+export interface CampaignInsightCreateRequest {
+  insight_type: CampaignInsight["insight_type"];
+  title: string;
+  summary: string;
+  confidence?: number;
+  evidence?: Record<string, unknown>;
+}
+
+export type DianxiaomiSyncScope = "products" | "listings" | "inventory" | "orders" | "fulfillment";
+
+export interface DianxiaomiCredentialsInput {
+  api_key?: string;
+  api_secret?: string;
+  access_token?: string;
+}
+
+export interface DianxiaomiConnectionInput {
+  display_name: string;
+  merchant_reference?: string;
+  api_base_url?: string;
+  shop_references: string[];
+  sync_scopes: DianxiaomiSyncScope[];
+  sync_interval_minutes: number;
+  credentials?: DianxiaomiCredentialsInput;
+  enabled?: boolean;
+}
+
+export interface DianxiaomiConnection {
+  id: string;
+  tenant_id: string;
+  display_name: string;
+  merchant_reference: string | null;
+  api_base_url: string | null;
+  shop_references: string[];
+  sync_scopes: DianxiaomiSyncScope[];
+  sync_interval_minutes: number;
+  status: string;
+  credentials_configured: boolean;
+  credentials_fingerprint: string | null;
+  config_version: number;
+  last_sync_at: string | null;
+  last_sync_status: string | null;
+  last_sync_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DianxiaomiConfigCheck {
+  connection_id: string;
+  status: "ready_for_vendor_validation" | "incomplete";
+  message: string;
+  config_version: number;
+}
+
+export interface DianxiaomiSyncRun {
+  id: string;
+  connection_id: string;
+  trigger: string;
+  status: string;
+  requested_scopes: DianxiaomiSyncScope[];
+  config_version: number;
+  records_received: number;
+  records_applied: number;
+  error_message: string | null;
+  cursor_before: string | null;
+  cursor_after: string | null;
+  started_at: string;
+  completed_at: string | null;
+}
+
+export interface DianxiaomiSyncStart {
+  run_id: string;
+  status: string;
+  message: string;
+}
+
+export interface RuntimeSetting {
+  key: string;
+  label: string;
+  description: string;
+  value_type: "integer" | "number" | string;
+  default_value: number;
+  value: number;
+  is_overridden: boolean;
+  version: number;
+  updated_by: string | null;
+  updated_at: string | null;
+}
+
+export interface RuntimeSettingRevision {
+  key: string;
+  version: number;
+  value: number | null;
+  action: string;
+  changed_by: string | null;
+  created_at: string;
 }

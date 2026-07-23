@@ -48,6 +48,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser $APP_HOME
 USER appuser
 
-# 启动前自动迁移数据库。
+# 数据库迁移由受控的 migrate Job/Compose service 单独执行。API 容器只提供
+# 应用进程，避免运行账号获得 schema-owner 权限或在多副本启动时竞争迁移。
 # 启用 OTEL 时可改用：opentelemetry-instrument uvicorn app.main:app --host 0.0.0.0 --port 8000
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers=${API_WORKERS:-3}"]

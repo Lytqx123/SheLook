@@ -167,7 +167,7 @@ def check_watermark(
 
 def detect_logo_regions(image_path: str, threshold: float = LOGO_CLIP_THRESHOLD) -> dict:
     """4 宫格切分图片，用 CLIP zero-shot 检测 Logo 区域。
-    
+
     这段 AI 写的，CLIP 不可用时降级亮度检测。
     FIXME: CLIP 对透明 Logo 的检测效果一般。
     """

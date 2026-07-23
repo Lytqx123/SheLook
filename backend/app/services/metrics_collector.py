@@ -14,10 +14,12 @@ from datetime import date
 from typing import Literal
 
 import httpx
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.core.logging import logger
 from app.schemas.metrics import MetricsBatchItem, MetricsRawItem
+from app.services.provider_config_service import resolve_provider_runtime_config
 
 DEFAULT_TIMEOUT = 30.0
 
@@ -73,13 +75,18 @@ class ShopeeCollector(PlatformMetricsCollector):
 
     platform = "shopee"
 
-    def __init__(self, region: str = "sg", timeout: float = DEFAULT_TIMEOUT):
+    def __init__(
+        self,
+        credentials: dict[str, str],
+        region: str = "sg",
+        timeout: float = DEFAULT_TIMEOUT,
+    ):
         super().__init__(timeout)
         self.region = region
-        self.partner_id = settings.SHOPEE_PARTNER_ID
-        self.partner_key = settings.SHOPEE_PARTNER_KEY
-        self.shop_id = settings.SHOPEE_SHOP_ID
-        self.access_token = settings.SHOPEE_ACCESS_TOKEN
+        self.partner_id = credentials.get("partner_id", "")
+        self.partner_key = credentials.get("partner_key", "")
+        self.shop_id = credentials.get("shop_id", "")
+        self.access_token = credentials.get("access_token", "")
 
         API_HOSTS = {
             "sg": "https://partner.shopeemobile.com",
@@ -215,13 +222,19 @@ class AmazonCollector(PlatformMetricsCollector):
         "fe": "https://sellingpartnerapi-fe.amazon.com",
     }
 
-    def __init__(self, region: str = "na", timeout: float = DEFAULT_TIMEOUT):
+    def __init__(
+        self,
+        credentials: dict[str, str],
+        marketplace_id: str,
+        region: str = "na",
+        timeout: float = DEFAULT_TIMEOUT,
+    ):
         super().__init__(timeout)
         self.region = region
-        self.refresh_token = settings.AMAZON_REFRESH_TOKEN
-        self.client_id = settings.AMAZON_CLIENT_ID
-        self.client_secret = settings.AMAZON_CLIENT_SECRET
-        self.marketplace_id = settings.AMAZON_MARKETPLACE_ID
+        self.refresh_token = credentials.get("refresh_token", "")
+        self.client_id = credentials.get("client_id", "")
+        self.client_secret = credentials.get("client_secret", "")
+        self.marketplace_id = marketplace_id
         self.api_base_url = self.API_BASE_URLS.get(region, self.API_BASE_URLS["na"])
         self._access_token: str | None = None
         self._access_token_expires_at = 0.0
@@ -342,7 +355,7 @@ class AmazonCollector(PlatformMetricsCollector):
                 "请缩短日期范围或使用每日调度"
             )
         if not self.marketplace_id:
-            raise RuntimeError("AMAZON_MARKETPLACE_ID 未配置")
+            raise RuntimeError("Amazon Marketplace ID 未在外部 API 配置中填写")
         access_token = await self._get_access_token()
 
         items: list[MetricsRawItem] = []
@@ -363,16 +376,26 @@ class AmazonCollector(PlatformMetricsCollector):
 
 # --- 工厂函数
 
-def get_collector(platform: Literal["shopee", "lazada", "amazon"]) -> PlatformMetricsCollector:
-    """获取平台数据采集器实例"""
-    collectors = {
-        "shopee": ShopeeCollector,
-        "lazada": LazadaCollector,
-        "amazon": AmazonCollector,
-    }
-
-    cls = collectors.get(platform)
-    if cls is None:
-        raise ValueError(f"不支持的平台: {platform}，可选值: {list(collectors.keys())}")
-
-    return cls()
+async def get_collector(
+    platform: Literal["shopee", "lazada", "amazon"],
+    db: AsyncSession,
+    tenant_id: str,
+) -> PlatformMetricsCollector:
+    """Create a collector from encrypted Web-managed tenant configuration."""
+    if platform == "lazada":
+        return LazadaCollector()
+    provider_config = await resolve_provider_runtime_config(db, platform, tenant_id)
+    if provider_config is None:
+        raise RuntimeError(f"{platform} 未在“外部 API 配置”中完成凭据配置或尚未启用")
+    if platform == "shopee":
+        return ShopeeCollector(
+            provider_config.credentials,
+            region=provider_config.config.get("region", "sg"),
+        )
+    if platform == "amazon":
+        return AmazonCollector(
+            provider_config.credentials,
+            marketplace_id=provider_config.config.get("marketplace_id", ""),
+            region=provider_config.config.get("region", "na"),
+        )
+    raise ValueError(f"不支持的平台: {platform}")

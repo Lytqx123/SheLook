@@ -13,7 +13,7 @@
         "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
         "datasource": {"type": "prometheus", "uid": "prometheus"},
         "targets": [
-          {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(rate(shelook_requests_total[1m])) by (endpoint)", "legendFormat": "{{endpoint}}"}
+          {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(rate(shelook_requests_total[1m])) by (route)", "legendFormat": "{{route}}"}
         ],
         "fieldConfig": {
           "defaults": {"unit": "reqps", "custom": {"lineWidth": 2}}

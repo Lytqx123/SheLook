@@ -6,6 +6,7 @@ SheLook 后端入口，FastAPI 应用挂载点。
 import asyncio
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 
 # 设置 HuggingFace 镜像（必须在 transformers 导入之前）
 # 用镜像拉模型可以避开代理断流问题
@@ -21,6 +22,11 @@ from fastapi.responses import JSONResponse
 from prometheus_client import Counter, Gauge, Histogram, make_asgi_app
 
 from app.config import settings
+from app.core.auth import (
+    close_session_revocation_redis,
+    is_feishu_login_configured,
+    is_oidc_login_configured,
+)
 from app.core.exceptions import AppError
 from app.core.logging import configure_logging, logger
 from app.core.middleware import register_middleware
@@ -32,16 +38,21 @@ configure_logging()
 REQUEST_COUNT = Counter(
     "shelook_requests_total",
     "总请求数",
-    ["method", "endpoint", "status"],
+    ["method", "route", "status"],
 )
 REQUEST_LATENCY = Histogram(
     "shelook_request_latency_seconds",
     "请求延迟（秒）",
-    ["method", "endpoint"],
+    ["method", "route"],
 )
 ACTIVE_REQUESTS = Gauge(
     "shelook_active_requests",
     "当前活跃请求数",
+)
+BUILD_INFO = Gauge(
+    "shelook_build_info",
+    "当前部署版本信息",
+    ["version", "revision", "environment", "region"],
 )
 
 # --- v2 新增监控指标 ---
@@ -68,9 +79,14 @@ CELERY_QUEUE_LENGTH = Gauge(
 )
 
 # --- 应用工厂 ---
+def _is_https_url(value: str) -> bool:
+    parsed = urlparse(value)
+    return parsed.scheme == "https" and bool(parsed.netloc)
+
+
 def _validate_production_security() -> None:
     """生产环境安全检查，缺了关键配置直接崩，省得上线才发现"""
-    if settings.APP_ENV != "production":
+    if settings.APP_ENV.lower() != "production":
         return
 
     errors = []
@@ -80,16 +96,46 @@ def _validate_production_security() -> None:
     if settings.SECRET_KEY == "shelook-dev-insecure-key-change-in-production":
         errors.append("SECRET_KEY 使用了开发默认值")
 
-    if settings.MINIO_ACCESS_KEY == "shelook-dev":
+    if settings.MINIO_ACCESS_KEY in {"shelook-dev", "shelook"}:
         errors.append("MINIO_ACCESS_KEY 使用了开发默认值")
-    if settings.MINIO_SECRET_KEY == "shelook-dev-secret":
+    if settings.MINIO_SECRET_KEY in {"shelook-dev-secret", "shelook-dev-minio", "shelook123"}:
         errors.append("MINIO_SECRET_KEY 使用了开发默认值")
+    if not settings.INTEGRATION_CREDENTIALS_ENCRYPTION_KEY:
+        errors.append("生产环境必须配置 INTEGRATION_CREDENTIALS_ENCRYPTION_KEY")
+    elif settings.INTEGRATION_CREDENTIALS_ENCRYPTION_KEY == settings.SECRET_KEY:
+        errors.append("INTEGRATION_CREDENTIALS_ENCRYPTION_KEY 必须与 SECRET_KEY 独立")
 
+    oidc_ready = is_oidc_login_configured()
+    feishu_ready = is_feishu_login_configured()
     if not settings.ENABLE_AUTH:
-        errors.append("生产环境必须启用企业 OIDC 认证")
-    for field in ("OIDC_ISSUER_URL", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET"):
-        if not getattr(settings, field):
-            errors.append(f"{field} 未配置")
+        errors.append("生产环境必须启用企业认证")
+    elif not (oidc_ready or feishu_ready):
+        errors.append(
+            "生产环境至少配置一个完整的企业登录提供方：通用 OIDC/SSO 或飞书 OAuth"
+        )
+    if oidc_ready:
+        if not _is_https_url(settings.OIDC_ISSUER_URL):
+            errors.append("OIDC_ISSUER_URL 必须使用 HTTPS")
+        if not _is_https_url(settings.OIDC_REDIRECT_URI):
+            errors.append("OIDC_REDIRECT_URI 必须使用 HTTPS")
+    if feishu_ready and not _is_https_url(settings.FEISHU_REDIRECT_URI):
+        errors.append("FEISHU_REDIRECT_URI 必须使用 HTTPS")
+    if settings.FEISHU_TENANT_KEY_MAP and settings.FEISHU_ALLOWED_TENANT_KEYS:
+        errors.append(
+            "FEISHU_TENANT_KEY_MAP 与 FEISHU_ALLOWED_TENANT_KEYS 不能同时配置"
+        )
+    if (
+        feishu_ready
+        and not settings.FEISHU_TENANT_KEY_MAP
+        and len(settings.FEISHU_ALLOWED_TENANT_KEYS) != 1
+    ):
+        errors.append(
+            "单租户 FEISHU_ALLOWED_TENANT_KEYS 必须恰好包含一个企业；多租户请使用 FEISHU_TENANT_KEY_MAP"
+        )
+    if not settings.TENANT_ENFORCEMENT_ENABLED:
+        errors.append("生产环境必须启用 TENANT_ENFORCEMENT_ENABLED")
+    if not settings.TENANT_RLS_ENABLED:
+        errors.append("生产环境必须启用 TENANT_RLS_ENABLED")
     if settings.ALLOW_GENERATION_MOCKS:
         errors.append("生产环境必须设置 ALLOW_GENERATION_MOCKS=false")
     if not settings.IMAGE_FETCH_ALLOWED_HOSTS:
@@ -107,18 +153,39 @@ def _validate_production_security() -> None:
             if not Path(getattr(settings, field)).is_file():
                 errors.append(f"{field} 指向的文件不存在")
 
-    # API 密钥检查
-    if not settings.REPLICATE_API_TOKEN:
-        warnings.append("REPLICATE_API_TOKEN 未配置，Replicate 生图链路将不可用")
-    if not settings.GEMINI_API_KEY:
-        logger.info("GEMINI_API_KEY 未配置，Google 生图/标签/审核链路将降级")
-
     if errors:
         raise RuntimeError("生产环境安全配置未通过: " + "; ".join(errors))
     if warnings:
         logger.warning("生产环境安全检查发现问题", issues=warnings)
     else:
         logger.info("生产环境安全检查通过")
+
+
+async def _validate_runtime_database_role() -> None:
+    """Reject a production API role that could bypass PostgreSQL RLS."""
+    if settings.APP_ENV.lower() != "production" or not settings.TENANT_RLS_ENABLED:
+        return
+
+    from sqlalchemy import text
+
+    from app.db.session import engine
+
+    try:
+        async with engine.connect() as connection:
+            result = await connection.execute(
+                text(
+                    "SELECT rolname, rolsuper, rolbypassrls "
+                    "FROM pg_roles WHERE rolname = current_user"
+                )
+            )
+            role = result.mappings().one_or_none()
+    except Exception as exc:
+        raise RuntimeError("无法验证生产数据库运行账号的 RLS 权限") from exc
+
+    if role is None or role["rolsuper"] or role["rolbypassrls"]:
+        raise RuntimeError(
+            "生产数据库运行账号不得为超级用户或拥有 BYPASSRLS；请使用受限 runtime role"
+        )
 
 
 @asynccontextmanager
@@ -129,9 +196,19 @@ async def lifespan(app: FastAPI):
         env=settings.APP_ENV,
         debug=settings.DEBUG,
         port=settings.API_PORT,
+        version=settings.APP_VERSION,
+        revision=settings.APP_REVISION,
     )
 
     _validate_production_security()
+    await _validate_runtime_database_role()
+    app.state.started_at = asyncio.get_running_loop().time()
+    BUILD_INFO.labels(
+        version=settings.APP_VERSION,
+        revision=settings.APP_REVISION,
+        environment=settings.APP_ENV,
+        region=settings.DEPLOYMENT_REGION,
+    ).set(1)
 
     # 生产环境预加载 CLIP，避免首次请求超时
     if settings.APP_ENV == "production":
@@ -180,29 +257,19 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("Redis Pub/Sub 断开失败", error=str(e))
 
+    await close_session_revocation_redis()
+
     from app.db.session import engine
     await engine.dispose()
 
 
 app = FastAPI(
     title="SheLook API",
-    version="1.0.0",
+    version=settings.APP_VERSION,
     docs_url="/docs" if settings.DEBUG else None,
     redoc_url="/redoc" if settings.DEBUG else None,
     lifespan=lifespan,
 )
-
-# --- CORS ---
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# --- 自定义中间件 ---
-register_middleware(app)
 
 # --- Prometheus /metrics ---
 metrics_app = make_asgi_app()
@@ -235,13 +302,35 @@ async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     logger.exception("未处理的异常", error=str(exc))
+    request_id = getattr(request.state, "request_id", None)
+    headers = {
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    }
+    if request_id:
+        headers["X-Request-ID"] = request_id
+        headers["X-Audit-Trace-ID"] = request_id
     return JSONResponse(
         status_code=500,
         content={"detail": "服务器内部错误"},
+        headers=headers,
     )
 
 
 # --- 健康检查 ---
+@app.get("/api/health/live", tags=["Health"])
+async def liveness_check() -> dict[str, Any]:
+    """进程存活探针；不访问外部依赖，避免依赖短暂故障造成级联重启。"""
+    return {
+        "status": "alive",
+        "version": settings.APP_VERSION,
+        "revision": settings.APP_REVISION,
+        "environment": settings.APP_ENV,
+    }
+
+
 @app.get("/api/health", tags=["Health"])
 async def health_check() -> dict[str, Any]:
     from app.db.session import engine
@@ -259,7 +348,8 @@ async def health_check() -> dict[str, Any]:
 
     return {
         "status": "healthy" if db_healthy and redis_healthy else "degraded",
-        "version": "1.0.0",
+        "version": settings.APP_VERSION,
+        "revision": settings.APP_REVISION,
         "environment": settings.APP_ENV,
         "checks": {
             "database": "ok" if db_healthy else "unavailable",
@@ -306,6 +396,8 @@ async def readiness_check() -> JSONResponse:
         status_code=200 if all_ok else 503,
         content={
             "status": "ready" if all_ok else "not_ready",
+            "version": settings.APP_VERSION,
+            "revision": settings.APP_REVISION,
             "checks": checks,
         },
     )
@@ -315,23 +407,39 @@ async def readiness_check() -> JSONResponse:
 from app.core.rate_limit import RateLimitMiddleware
 
 app.add_middleware(RateLimitMiddleware, redis_url=settings.REDIS_URL)
+register_middleware(app)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # --- 路由注册 ---
 from app.api.audit import router as audit_router
 from app.api.auth import router as auth_router
+from app.api.campaigns import compat_router as campaign_compat_router
+from app.api.campaigns import router as campaign_router
 from app.api.clustering import router as clustering_router
 from app.api.dashboard import router as dashboard_router
+from app.api.enterprise_data import router as enterprise_data_router
 from app.api.experiment import router as experiment_router
 from app.api.fairness import router as fairness_router
 from app.api.flywheel import router as flywheel_router
 from app.api.generation import router as generation_router
+from app.api.integrations import router as integrations_router
 from app.api.metrics import router as metrics_router
+from app.api.organization import router as organization_router
 from app.api.prediction import router as prediction_router
 from app.api.products import router as product_router
+from app.api.provider_configs import router as provider_configs_router
 from app.api.review import router as review_router
+from app.api.runtime_settings import router as runtime_settings_router
 from app.api.schemes import router as scheme_router
 from app.api.supplier import router as supplier_router
 from app.api.video import router as video_router
+from app.api.workflows import router as workflow_router
 from app.core.auth import require_auth
 
 protected = [Depends(require_auth)]
@@ -349,6 +457,14 @@ app.include_router(clustering_router, dependencies=protected)
 app.include_router(fairness_router, dependencies=protected)
 app.include_router(supplier_router, dependencies=protected)
 app.include_router(auth_router)
+app.include_router(organization_router, dependencies=protected)
+app.include_router(workflow_router, dependencies=protected)
+app.include_router(integrations_router, dependencies=protected)
+app.include_router(provider_configs_router, dependencies=protected)
+app.include_router(runtime_settings_router, dependencies=protected)
+app.include_router(enterprise_data_router, dependencies=protected)
+app.include_router(campaign_router, dependencies=protected)
+app.include_router(campaign_compat_router, dependencies=protected)
 # Metrics 写端点走机器 API Key，读端点在路由内部校验用户
 app.include_router(metrics_router)
 

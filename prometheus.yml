@@ -1,49 +1,16 @@
-# Prometheus 采集配置 —— SheLook
+# SheLook 开发环境 Prometheus 配置。
 #
-# 当前只采集 Backend 的 /metrics
-# 采集间隔 15s，本地保留 30d
-#
-# 可选扩展（需要先取消 docker-compose.yml 里对应 exporter 的注释）:
-#   postgres-exporter:9187
-#   redis-exporter:9121
-#   node-exporter:9100
-
+# 开发后端在 METRICS_API_KEY 为空时允许内部网络抓取；生产与预发请使用
+# prometheus.secure.yml，由 Compose 通过 Docker secret 提供 Bearer 凭据。
 global:
   scrape_interval: 15s
   scrape_timeout: 10s
   evaluation_interval: 15s
 
-# 告警规则（以后再加）
-rule_files:
-  # - "alerts/*.yml"
-
-# 采集目标
 scrape_configs:
-  # ---- Backend FastAPI ----
-  - job_name: "shelook-backend"
-    metrics_path: "/metrics"
+  - job_name: shelook-backend
+    metrics_path: /metrics
     static_configs:
       - targets: ["backend:8000"]
         labels:
-          service: "shelook-api"
-
-  # ---- 可选: PostgreSQL ----
-  # - job_name: "shelook-postgres"
-  #   static_configs:
-  #     - targets: ["postgres-exporter:9187"]
-  #       labels:
-  #         service: "shelook-database"
-
-  # ---- 可选: Redis ----
-  # - job_name: "shelook-redis"
-  #   static_configs:
-  #     - targets: ["redis-exporter:9121"]
-  #       labels:
-  #         service: "shelook-cache"
-
-  # ---- 可选: Node 系统指标 ----
-  # - job_name: "shelook-node"
-  #   static_configs:
-  #     - targets: ["node-exporter:9100"]
-  #       labels:
-  #         service: "shelook-host"
+          service: shelook-api

@@ -35,6 +35,11 @@ tests/
 .coverage
 htmlcov/
 
+# Local model artifacts are supplied by the runtime volume, never baked into
+# a build image. This keeps release images reproducible and prevents ignored
+# pickle snapshots from leaking into the image context.
+models/
+
 # Docker
 Dockerfile*
 .dockerignore

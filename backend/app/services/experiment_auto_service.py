@@ -11,8 +11,8 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.core.logging import logger
+from app.core.tenant import get_current_tenant_id
 from app.models import (
     ABExperiment,
     DailyMetric,
@@ -22,6 +22,7 @@ from app.models import (
     PredictionRecord,
     ReviewStatus,
 )
+from app.services.runtime_settings import get_effective_runtime_setting
 
 # 自动实验参数
 CTR_DIFF_THRESHOLD = 0.02  # 预测 CTR 差距小于此值才建实验
@@ -156,9 +157,9 @@ async def update_traffic_allocation(
     experiment_id: int,
 ) -> dict[str, Any]:
     """UCB 算法动态调整流量比例。
-    
-    探索阶段（曝光 < 100）保持 50/50，利用阶段按 UCB 上界分配。
-    FIXME: 达到样本上限自动结束的逻辑跟 stop_experiment 的 STOPPED 语义有重叠。
+
+    探索阶段（曝光 < 100）保持 50/50，利用阶段按 UCB 上界分配；达到
+    完成曝光阈值后标记为 COMPLETED，人工停止则保持 STOPPED，二者语义不同。
     """
     exp = await db.get(ABExperiment, experiment_id)
     if not exp:
@@ -174,7 +175,16 @@ async def update_traffic_allocation(
 
     total_impressions = metrics_a["impressions"] + metrics_b["impressions"]
 
-    if total_impressions >= settings.EXPERIMENT_COMPLETION_IMPRESSIONS:
+    completion_threshold = int(
+        (
+            await get_effective_runtime_setting(
+                db,
+                tenant_id=get_current_tenant_id(),
+                setting_key="experiments.completion_impressions",
+            )
+        ).value
+    )
+    if total_impressions >= completion_threshold:
         from app.services.reward_scorer import calculate_significance
 
         significance = calculate_significance(metrics_a, metrics_b)
@@ -198,6 +208,7 @@ async def update_traffic_allocation(
             "metrics_a": metrics_a,
             "metrics_b": metrics_b,
             "method": "completed_sample_cap",
+            "completion_impressions_threshold": completion_threshold,
         }
 
     if total_impressions < MIN_IMPRESSIONS_FOR_UCB:

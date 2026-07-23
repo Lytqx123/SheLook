@@ -9,6 +9,7 @@ from app.core.deps import get_pagination_params
 from app.core.exceptions import ConflictError, NotFoundError
 from app.core.logging import logger
 from app.core.middleware import request_id_var
+from app.core.tenant import get_current_tenant_id
 from app.db.session import get_db
 from app.models.product import Product, ProductStatus
 from app.schemas import (
@@ -17,6 +18,11 @@ from app.schemas import (
     ProductOut,
     ProductUpdate,
     SchemeOut,
+)
+from app.services.product_catalog_cache import (
+    get_product_list_cache,
+    invalidate_product_list_cache,
+    set_product_list_cache,
 )
 
 router = APIRouter(prefix="/api/products", tags=["Products"])
@@ -40,6 +46,7 @@ def _batch_scheme(product: Product) -> list[SchemeOut]:
     return [
         SchemeOut(
             id=s.id,
+            product_id=s.product_id,
             scheme_name=s.scheme_name,
             style_tags=s.style_tags,
             reference_images=s.reference_images,
@@ -86,6 +93,17 @@ async def list_products(
     request_id = request_id_var.get()
     logger.info("查询商品列表", request_id=request_id, page=page, category=category)
 
+    tenant_id = get_current_tenant_id()
+    cached = await get_product_list_cache(
+        tenant_id=tenant_id,
+        page=page,
+        page_size=page_size,
+        category=category,
+        status=status,
+    )
+    if cached is not None:
+        return ProductListOut.model_validate(cached)
+
     query = select(Product).options(selectinload(Product.schemes))
     if category:
         query = query.where(Product.category == category)
@@ -104,12 +122,21 @@ async def list_products(
     total_result = await db.execute(count_query)
     total = total_result.scalar_one()
 
-    return ProductListOut(
+    response = ProductListOut(
         items=[_to_product_out(p) for p in products],
         total=total,
         page=page,
         page_size=page_size,
     )
+    await set_product_list_cache(
+        tenant_id=tenant_id,
+        page=page,
+        page_size=page_size,
+        category=category,
+        status=status,
+        payload=response.model_dump(mode="json"),
+    )
+    return response
 
 
 @router.get("/{product_id}", response_model=ProductOut)
@@ -150,7 +177,9 @@ async def create_product(
     )
     db.add(product)
     await db.flush()
+    await db.commit()
     await db.refresh(product)
+    await invalidate_product_list_cache(product.tenant_id)
 
     logger.info("商品创建成功", sku_code=body.sku_code, product_id=product.id)
 
@@ -178,13 +207,14 @@ async def update_product(
 
     await db.commit()
     await db.refresh(product)
+    await invalidate_product_list_cache(product.tenant_id)
 
     # 如果图片变了且已发布，重新触发向量索引
     if image_changed and product.status == ProductStatus.PUBLISHED:
         try:
             from app.tasks.vector_task import index_product_embedding
 
-            index_product_embedding.delay(product.id)
+            index_product_embedding.delay(product.id, product.tenant_id)
         except Exception as exc:
             logger.error("商品已更新但向量索引任务入队失败", product_id=product.id, error=str(exc))
 
@@ -206,10 +236,11 @@ async def delete_product(
 
     product.status = ProductStatus.ARCHIVED
     await db.commit()
+    await invalidate_product_list_cache(product.tenant_id)
     try:
         from app.tasks.vector_task import index_product_embedding
 
-        index_product_embedding.delay(product.id)
+        index_product_embedding.delay(product.id, product.tenant_id)
     except Exception as exc:
         logger.error("商品已归档但向量清理任务入队失败", product_id=product.id, error=str(exc))
 
@@ -261,6 +292,7 @@ async def publish_product(
     product.status = ProductStatus.PUBLISHED
     await db.commit()
     await db.refresh(product)
+    await invalidate_product_list_cache(product.tenant_id)
 
     # DB 确认公开后再清私桶副本，失败了不回滚
     for bucket, object_key in private_sources:
@@ -277,7 +309,7 @@ async def publish_product(
     try:
         from app.tasks.vector_task import index_product_embedding
 
-        index_product_embedding.delay(product.id)
+        index_product_embedding.delay(product.id, product.tenant_id)
     except Exception as exc:
         logger.error("商品已发布但向量索引任务入队失败", product_id=product.id, error=str(exc))
 

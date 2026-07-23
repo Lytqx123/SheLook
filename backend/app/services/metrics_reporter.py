@@ -1,11 +1,4 @@
-"""业务指标上报器 —— 在 backend 进程内更新 Prometheus 自定义指标。
-
-通过 lifespan 后台任务每 60s 从 DB/Redis 拉取数据更新：
-  - shelook_quality_pass_rate (Gauge)
-  - shelook_model_prediction_drift (Gauge)
-  - shelook_generation_task_duration_seconds (Histogram)
-  - shelook_celery_queue_length (Gauge)
-"""
+"""Prometheus business metrics, aggregated safely across active tenants."""
 
 import asyncio
 
@@ -13,67 +6,40 @@ from sqlalchemy import func, select
 
 from app.config import settings
 from app.core.logging import logger
-
-# 已观察的审计日志 ID，避免重复 observe。None 表示首次运行，跳过历史数据。
-_last_audit_id: int | None = None
+from app.core.tenant import tenant_context
 
 REPORT_INTERVAL_SECONDS = 60
+CELERY_QUEUES = ("orchestration", "generation", "model", "analytics")
+_last_audit_ids: dict[str, int] = {}
 
 
-async def _update_quality_pass_rate(db) -> None:
-    """质检通过率（按 L1/L2/L3 层级）"""
-    from app.main import QUALITY_PASS_RATE
+async def _collect_quality_pass_counts(db) -> tuple[int, int, int, int]:
     from app.models.image import GeneratedImage
 
     total = await db.scalar(select(func.count()).select_from(GeneratedImage))
     if not total:
-        return
-
+        return 0, 0, 0, 0
     l1_passed = await db.scalar(
-        select(func.count()).select_from(GeneratedImage)
+        select(func.count())
+        .select_from(GeneratedImage)
         .where(GeneratedImage.overall_score > 0)
     )
     l2_passed = await db.scalar(
-        select(func.count()).select_from(GeneratedImage)
+        select(func.count())
+        .select_from(GeneratedImage)
         .where(GeneratedImage.overall_score >= 60)
     )
     l3_passed = await db.scalar(
-        select(func.count()).select_from(GeneratedImage)
+        select(func.count())
+        .select_from(GeneratedImage)
         .where(GeneratedImage.overall_score >= 75)
     )
-
-    QUALITY_PASS_RATE.labels(layer="L1", verdict="auto_approved").set(
-        (l1_passed or 0) / total
-    )
-    QUALITY_PASS_RATE.labels(layer="L2", verdict="auto_approved").set(
-        (l2_passed or 0) / total
-    )
-    QUALITY_PASS_RATE.labels(layer="L3", verdict="auto_approved").set(
-        (l3_passed or 0) / total
-    )
+    return total, l1_passed or 0, l2_passed or 0, l3_passed or 0
 
 
-async def _update_celery_queue_length() -> None:
-    """Celery 队列深度（从 Redis 直接读 list 长度）"""
-    import redis.asyncio as aioredis
-
-    from app.main import CELERY_QUEUE_LENGTH
-
-    try:
-        r = aioredis.from_url(settings.CELERY_BROKER_URL)
-        length = await r.llen("celery")
-        await r.aclose()
-        CELERY_QUEUE_LENGTH.labels(queue="celery").set(length)
-    except Exception as e:
-        logger.warning("Celery 队列长度采集失败", error=str(e))
-
-
-async def _update_model_prediction_drift(db) -> None:
-    """模型预测漂移（MAE）：预测值 vs 实际值"""
-    from app.main import MODEL_PREDICTION_DRIFT
+async def _collect_model_prediction_diffs(db) -> tuple[list[float], list[float]]:
     from app.models.prediction import DailyMetric, PredictionRecord
 
-    # CTR 漂移
     ctr_rows = await db.execute(
         select(
             PredictionRecord.predicted_ctr,
@@ -91,12 +57,7 @@ async def _update_model_prediction_drift(db) -> None:
         for row in ctr_rows
         if row[0] is not None and row[1] is not None
     ]
-    if ctr_diffs:
-        MODEL_PREDICTION_DRIFT.labels(model_type="ctr").set(
-            sum(ctr_diffs) / len(ctr_diffs)
-        )
 
-    # Return 漂移
     level_prob = {"low": 0.1, "medium": 0.3, "high": 0.7}
     return_rows = await db.execute(
         select(
@@ -108,82 +69,109 @@ async def _update_model_prediction_drift(db) -> None:
         .where(DailyMetric.return_rate.isnot(None))
         .group_by(PredictionRecord.id, PredictionRecord.return_risk_level)
     )
-    return_diffs = []
+    return_diffs: list[float] = []
     for row in return_rows:
         level = row[0].value if row[0] else "low"
-        prob = level_prob.get(level, 0.1)
         actual = row[1]
         if actual is not None:
-            return_diffs.append(abs(prob - actual))
-    if return_diffs:
-        MODEL_PREDICTION_DRIFT.labels(model_type="return").set(
-            sum(return_diffs) / len(return_diffs)
-        )
+            return_diffs.append(abs(level_prob.get(level, 0.1) - actual))
+    return ctr_diffs, return_diffs
 
 
-async def _update_generation_task_duration(db) -> None:
-    """生图任务耗时（从 audit_log 增量观察）"""
-    global _last_audit_id
+async def _observe_generation_task_duration(db, tenant_id: str) -> None:
     from app.main import GENERATION_TASK_DURATION
     from app.models.audit_log import AuditLog
 
-    if _last_audit_id is None:
+    last_audit_id = _last_audit_ids.get(tenant_id)
+    if last_audit_id is None:
         max_id = await db.scalar(
             select(func.max(AuditLog.id)).where(AuditLog.operation == "generate")
         )
-        _last_audit_id = max_id or 0
-        logger.info("生图耗时指标初始化", last_audit_id=_last_audit_id)
+        _last_audit_ids[tenant_id] = max_id or 0
+        logger.info(
+            "Generation duration metric initialized",
+            tenant_id=tenant_id,
+            last_audit_id=max_id or 0,
+        )
         return
 
     rows = await db.execute(
-        select(
-            AuditLog.id,
-            AuditLog.model_name,
-            AuditLog.status,
-            AuditLog.duration_ms,
-        )
+        select(AuditLog.id, AuditLog.model_name, AuditLog.status, AuditLog.duration_ms)
         .where(
             AuditLog.operation == "generate",
-            AuditLog.id > _last_audit_id,
+            AuditLog.id > last_audit_id,
             AuditLog.duration_ms.isnot(None),
         )
         .order_by(AuditLog.id)
         .limit(500)
     )
-    max_id = _last_audit_id
+    max_id = last_audit_id
     for row in rows:
-        provider = row.model_name or "unknown"
-        status = row.status or "unknown"
-        GENERATION_TASK_DURATION.labels(provider=provider, status=status).observe(
-            row.duration_ms / 1000.0
-        )
-        if row.id > max_id:
-            max_id = row.id
-    _last_audit_id = max_id
+        GENERATION_TASK_DURATION.labels(
+            provider=row.model_name or "unknown", status=row.status or "unknown"
+        ).observe(row.duration_ms / 1000.0)
+        max_id = max(max_id, row.id)
+    _last_audit_ids[tenant_id] = max_id
+
+
+async def _update_celery_queue_length() -> None:
+    import redis.asyncio as aioredis
+
+    from app.main import CELERY_QUEUE_LENGTH
+
+    try:
+        redis_client = aioredis.from_url(settings.CELERY_BROKER_URL)
+        for queue in CELERY_QUEUES:
+            CELERY_QUEUE_LENGTH.labels(queue=queue).set(await redis_client.llen(queue))
+        await redis_client.aclose()
+    except Exception as exc:
+        logger.warning("Celery queue metric collection failed", error=str(exc))
 
 
 async def _update_all_metrics() -> None:
-    """采集并更新全部业务指标"""
     from app.db.session import async_session_factory
+    from app.main import MODEL_PREDICTION_DRIFT, QUALITY_PASS_RATE
+    from app.services.tenant_job_service import get_active_tenant_ids
 
     try:
-        async with async_session_factory() as db:
-            await _update_quality_pass_rate(db)
-            await _update_model_prediction_drift(db)
-            await _update_generation_task_duration(db)
+        totals = [0, 0, 0, 0]
+        ctr_diffs: list[float] = []
+        return_diffs: list[float] = []
+        for tenant_id in await get_active_tenant_ids():
+            with tenant_context(tenant_id, source="metrics_reporter"):
+                async with async_session_factory() as db:
+                    counts = await _collect_quality_pass_counts(db)
+                    totals = [left + right for left, right in zip(totals, counts, strict=True)]
+                    tenant_ctr_diffs, tenant_return_diffs = await _collect_model_prediction_diffs(db)
+                    ctr_diffs.extend(tenant_ctr_diffs)
+                    return_diffs.extend(tenant_return_diffs)
+                    await _observe_generation_task_duration(db, tenant_id)
+
+        total, l1_passed, l2_passed, l3_passed = totals
+        for layer, passed in (("L1", l1_passed), ("L2", l2_passed), ("L3", l3_passed)):
+            QUALITY_PASS_RATE.labels(layer=layer, verdict="auto_approved").set(
+                passed / total if total else 0
+            )
+        if ctr_diffs:
+            MODEL_PREDICTION_DRIFT.labels(model_type="ctr").set(
+                sum(ctr_diffs) / len(ctr_diffs)
+            )
+        if return_diffs:
+            MODEL_PREDICTION_DRIFT.labels(model_type="return").set(
+                sum(return_diffs) / len(return_diffs)
+            )
         await _update_celery_queue_length()
-    except Exception as e:
-        logger.warning("业务指标采集失败", error=str(e))
+    except Exception as exc:
+        logger.warning("Business metric collection failed", error=str(exc))
 
 
 async def metrics_reporter_loop() -> None:
-    """业务指标上报循环（由 lifespan 启动，应用关闭时取消）"""
-    logger.info("业务指标上报器已启动", interval=REPORT_INTERVAL_SECONDS)
+    logger.info("Business metrics reporter started", interval=REPORT_INTERVAL_SECONDS)
     while True:
         try:
             await _update_all_metrics()
         except asyncio.CancelledError:
             raise
-        except Exception as e:
-            logger.warning("指标上报循环异常", error=str(e))
+        except Exception as exc:
+            logger.warning("Business metrics reporter loop failed", error=str(exc))
         await asyncio.sleep(REPORT_INTERVAL_SECONDS)

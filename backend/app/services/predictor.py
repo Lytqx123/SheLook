@@ -5,8 +5,10 @@ CTR / CVR 预估服务 —— 效果预测引擎
 31 维手工特征 + CLIP embedding 降维 48 维 = 79 维融合。
 """
 
+import hashlib
 import os
 import pickle
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -32,14 +34,22 @@ MANUAL_FEATURE_DIM = 31
 FUSED_FEATURE_DIM = MANUAL_FEATURE_DIM + EMBEDDING_DOWNSAMPLE_DIM
 
 
+def _tenant_model_dir(tenant_id: str) -> Path:
+    """Map an opaque tenant identifier to an isolated, path-safe model directory."""
+    digest = hashlib.sha256(tenant_id.encode("utf-8")).hexdigest()[:32]
+    return MODEL_DIR / "tenants" / digest
+
+
 class CTRPredictor:
     """CTR / 爆款率 / 退货风险预估"""
 
-    def __init__(self):
+    def __init__(self, model_dir: Path | None = None):
+        self.model_dir = Path(model_dir or MODEL_DIR)
         self.ctr_model: HistGradientBoostingRegressor | None = None
         self.hit_classifier: HistGradientBoostingClassifier | HistGradientBoostingRegressor | None = None
         self.return_classifier: HistGradientBoostingClassifier | None = None
         self.is_trained = False
+        self._model_version: str | None = None
         self._category_stats: dict[str, dict[str, float]] = {}
         self._feature_version: int = 2
 
@@ -488,28 +498,35 @@ class CTRPredictor:
         if not self.is_trained:
             return
 
-        if path is None and versioned:
-            today = datetime.now().strftime("%Y%m%d")
-            path = MODEL_DIR / f"{MODEL_PREFIX}_{today}.pkl"
+        if path is None:
+            if versioned:
+                self._model_version = datetime.now().strftime("%Y%m%d")
+                path = self.model_dir / f"{MODEL_PREFIX}_{self._model_version}.pkl"
+            else:
+                path = self.model_dir / f"{MODEL_PREFIX}.pkl"
 
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "wb") as f:
+        temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        with open(temp_path, "wb") as f:
             pickle.dump({
                 "ctr": self.ctr_model,
                 "hit": self.hit_classifier,
                 "return": self.return_classifier,
                 "category_stats": self._category_stats,
                 "feature_version": self._feature_version,
+                "model_version": self._model_version,
             }, f)
+        os.replace(temp_path, path)
         logger.info(f"Models saved to {path}")
 
         if versioned:
+            self.save(path=self.model_dir / f"{MODEL_PREFIX}.pkl", versioned=False)
             self._cleanup_old_versions()
 
     def _cleanup_old_versions(self):
         """保留最近 4 个版本，删除旧的"""
-        versions = sorted(MODEL_DIR.glob(f"{MODEL_PREFIX}_*.pkl"))
+        versions = sorted(self.model_dir.glob(f"{MODEL_PREFIX}_*.pkl"))
         if len(versions) > MAX_VERSIONS:
             for old in versions[:-MAX_VERSIONS]:
                 try:
@@ -519,9 +536,15 @@ class CTRPredictor:
                     logger.warning(f"删除旧版本失败: {old.name}: {e}")
 
     @classmethod
-    def list_versions(cls) -> list[dict]:
+    def for_tenant(cls, tenant_id: str) -> "CTRPredictor":
+        return cls(model_dir=_tenant_model_dir(tenant_id))
+
+    @classmethod
+    def list_versions(cls, tenant_id: str | None = None) -> list[dict]:
         """列出所有可用模型版本"""
-        versions = sorted(MODEL_DIR.glob(f"{MODEL_PREFIX}_*.pkl"), reverse=True)
+        model_dir = _tenant_model_dir(tenant_id) if tenant_id else MODEL_DIR
+        versions = sorted(model_dir.glob(f"{MODEL_PREFIX}_*.pkl"), reverse=True)
+        current_version = cls.get_current_version(tenant_id)
         result = []
         for v in versions:
             date_str = v.stem.replace(f"{MODEL_PREFIX}_", "")
@@ -531,22 +554,45 @@ class CTRPredictor:
                 "date": date_str,
                 "path": str(v),
                 "size_kb": size_kb,
-                "is_latest": v == versions[0] if versions else False,
+                "is_latest": date_str == current_version,
             })
         return result
 
     @classmethod
-    def get_latest_version(cls) -> Path | None:
+    def get_latest_version(cls, tenant_id: str | None = None) -> Path | None:
         """获取最新版本路径"""
-        versions = sorted(MODEL_DIR.glob(f"{MODEL_PREFIX}_*.pkl"), reverse=True)
+        model_dir = _tenant_model_dir(tenant_id) if tenant_id else MODEL_DIR
+        versions = sorted(model_dir.glob(f"{MODEL_PREFIX}_*.pkl"), reverse=True)
         return versions[0] if versions else None
+
+    def get_runtime_model_path(self) -> Path | None:
+        """Prefer the explicit current pointer so rollback affects live inference."""
+        current = self.model_dir / f"{MODEL_PREFIX}.pkl"
+        if current.exists():
+            return current
+        versions = sorted(self.model_dir.glob(f"{MODEL_PREFIX}_*.pkl"), reverse=True)
+        return versions[0] if versions else None
+
+    @classmethod
+    def get_current_version(cls, tenant_id: str | None = None) -> str | None:
+        """Read the active version stored in the tenant's current model pointer."""
+        model_dir = _tenant_model_dir(tenant_id) if tenant_id else MODEL_DIR
+        current = model_dir / f"{MODEL_PREFIX}.pkl"
+        if not current.exists():
+            latest = cls.get_latest_version(tenant_id)
+            return latest.stem.replace(f"{MODEL_PREFIX}_", "") if latest else None
+        try:
+            with open(current, "rb") as model_file:
+                metadata = pickle.load(model_file)
+            return metadata.get("model_version")
+        except (OSError, pickle.UnpicklingError, AttributeError, EOFError):
+            logger.warning("Unable to read active model version", path=str(current))
+            return None
 
     def load(self, path: Path | None = None):
         """加载模型"""
         if path is None:
-            path = self.get_latest_version()
-            if path is None:
-                path = MODEL_DIR / f"{MODEL_PREFIX}.pkl"
+            path = self.get_runtime_model_path()
 
         path = Path(path)
         if not path.exists():
@@ -561,25 +607,29 @@ class CTRPredictor:
         self.return_classifier = data.get("return")
         self._category_stats = data.get("category_stats", {})
         self._feature_version = data.get("feature_version", 1)
+        self._model_version = data.get("model_version")
+        if self._model_version is None and path.stem.startswith(f"{MODEL_PREFIX}_"):
+            self._model_version = path.stem.replace(f"{MODEL_PREFIX}_", "")
         self.is_trained = self.ctr_model is not None
 
         logger.info(f"Models loaded from {path}", feature_version=self._feature_version)
 
     @classmethod
-    def rollback(cls, target_date: str) -> dict:
+    def rollback(cls, target_date: str, tenant_id: str | None = None) -> dict:
         """回滚到指定日期的模型版本"""
-        target_path = MODEL_DIR / f"{MODEL_PREFIX}_{target_date}.pkl"
+        instance = cls.for_tenant(tenant_id) if tenant_id else cls()
+        target_path = instance.model_dir / f"{MODEL_PREFIX}_{target_date}.pkl"
         if not target_path.exists():
             available = [v.stem.replace(f"{MODEL_PREFIX}_", "") for v in
-                        sorted(MODEL_DIR.glob(f"{MODEL_PREFIX}_*.pkl"))]
+                        sorted(instance.model_dir.glob(f"{MODEL_PREFIX}_*.pkl"))]
             return {
                 "success": False,
                 "message": f"版本 {target_date} 不存在",
                 "available_versions": available,
             }
 
-        predictor.load(target_path)
-        predictor.save(path=MODEL_DIR / f"{MODEL_PREFIX}.pkl", versioned=False)
+        instance.load(target_path)
+        instance.save(path=instance.model_dir / f"{MODEL_PREFIX}.pkl", versioned=False)
 
         logger.info(f"模型已回滚到版本 {target_date}")
         return {
@@ -610,29 +660,44 @@ class CTRPredictor:
 
 
 # 全局单例
-predictor = CTRPredictor()
-_loaded_model_path: Path | None = None
-_loaded_model_mtime: float | None = None
+predictor = CTRPredictor.for_tenant(settings.DEFAULT_TENANT_ID)
+_runtime_predictors: dict[str, tuple[CTRPredictor, Path | None, float | None]] = {
+    settings.DEFAULT_TENANT_ID: (predictor, None, None)
+}
 
 
-def get_runtime_predictor() -> CTRPredictor:
-    """返回运行时预测器；模型文件更新后自动热加载。"""
-    global _loaded_model_mtime, _loaded_model_path
+def get_runtime_predictor(tenant_id: str | None = None) -> CTRPredictor:
+    """Return a tenant-isolated predictor and hot-reload its current model pointer."""
+    if tenant_id is None:
+        from app.core.tenant import get_current_tenant_id
 
-    model_path = CTRPredictor.get_latest_version()
+        tenant_id = get_current_tenant_id()
+
+    cached = _runtime_predictors.get(tenant_id)
+    if cached is None:
+        runtime_predictor = CTRPredictor.for_tenant(tenant_id)
+        loaded_path: Path | None = None
+        loaded_mtime: float | None = None
+    else:
+        runtime_predictor, loaded_path, loaded_mtime = cached
+
+    model_path = runtime_predictor.get_runtime_model_path()
     if model_path is None:
-        fallback = MODEL_DIR / f"{MODEL_PREFIX}.pkl"
-        model_path = fallback if fallback.exists() else None
+        # Existing global artifacts are an explicitly shared baseline, never another tenant's model.
+        legacy = MODEL_DIR / f"{MODEL_PREFIX}.pkl"
+        model_path = legacy if legacy.exists() else CTRPredictor.get_latest_version()
 
     if model_path is None:
-        return predictor
+        _runtime_predictors[tenant_id] = (runtime_predictor, None, None)
+        return runtime_predictor
 
     mtime = model_path.stat().st_mtime
-    if _loaded_model_path != model_path or _loaded_model_mtime != mtime:
-        predictor.load(model_path)
-        _loaded_model_path = model_path
-        _loaded_model_mtime = mtime
-    return predictor
+    if loaded_path != model_path or loaded_mtime != mtime:
+        runtime_predictor.load(model_path)
+        loaded_path = model_path
+        loaded_mtime = mtime
+    _runtime_predictors[tenant_id] = (runtime_predictor, loaded_path, loaded_mtime)
+    return runtime_predictor
 
 
 # 启动时加载已有模型；无模型文件时保留显式的降级预测。

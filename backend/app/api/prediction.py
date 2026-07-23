@@ -7,10 +7,13 @@ from sqlalchemy import desc, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.auth import UserInfo, has_permission, require_auth
 from app.core.deps import get_predictor
 from app.core.exceptions import NotFoundError
 from app.core.logging import logger
+from app.core.tenant import get_current_tenant_id
 from app.db.session import get_db
+from app.models.enterprise_data import PredictionSnapshot
 from app.models.image import GeneratedImage, ImageScheme
 from app.models.prediction import DailyMetric, PredictionRecord, ReturnRiskLevel
 from app.models.product import Product
@@ -117,6 +120,24 @@ async def _execute_prediction(
     await db.flush()
     await db.refresh(record)
 
+    snapshot = PredictionSnapshot(
+        tenant_id=get_current_tenant_id(),
+        prediction_record_id=record.id,
+        image_id=image_id,
+        predicted_ctr=record.predicted_ctr,
+        model_version=CTRPredictor.get_current_version(get_current_tenant_id()),
+        feature_version="v1",
+        entity_snapshot_json={
+            "image_id": image_id,
+            "scheme_id": image.scheme_id,
+            "product_id": image.scheme.product_id if image.scheme else None,
+            "market": image.market_variant,
+        },
+        predicted_at=record.predicted_at,
+    )
+    db.add(snapshot)
+    await db.flush()
+
     logger.info("预测完成", image_id=image_id, ctr=record.predicted_ctr)
 
     return PredictionResponse(
@@ -221,9 +242,9 @@ async def list_model_versions():
     """列出可用的预测模型版本"""
     from app.services.predictor import CTRPredictor
 
-    versions = CTRPredictor.list_versions()
-    latest = CTRPredictor.get_latest_version()
-    current = latest.stem.replace("ctr_predictor_", "") if latest else None
+    tenant_id = get_current_tenant_id()
+    versions = CTRPredictor.list_versions(tenant_id)
+    current = CTRPredictor.get_current_version(tenant_id)
 
     return {
         "versions": versions,
@@ -232,9 +253,16 @@ async def list_model_versions():
 
 
 @router.post("/rollback", response_model=dict)
-async def rollback_model(body: ModelRollbackRequest):
+async def rollback_model(
+    body: ModelRollbackRequest,
+    user: UserInfo = Depends(require_auth),
+):
     """回滚预测模型到指定日期版本，管理员手动操作"""
-    result = CTRPredictor.rollback(body.target_date)
+    if user.role != "admin" and not has_permission(user, "model:manage"):
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=403, detail="需要模型管理权限")
+    result = CTRPredictor.rollback(body.target_date, tenant_id=user.tenant_id)
 
     try:
         from app.core.audit import audit_operation

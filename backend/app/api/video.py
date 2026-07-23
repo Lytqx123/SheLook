@@ -4,10 +4,12 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import UserInfo, require_auth
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.logging import logger
 from app.db.session import get_db
 from app.schemas import VideoGenerateRequest
+from app.services.feature_flags import require_feature_enabled
 
 router = APIRouter(prefix="/api/video", tags=["Video"])
 
@@ -16,11 +18,14 @@ router = APIRouter(prefix="/api/video", tags=["Video"])
 async def generate_video(
     request: Request,
     body: VideoGenerateRequest,
+    user: UserInfo = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
     """生成商品短视频，Kling → Runway 降级，都不行就报 unavailable"""
     from app.models.image import GeneratedImage
     from app.services.video_generator import generate_product_video
+
+    await require_feature_enabled(db, "video_generation")
 
     # 有 image_id 就用它查 URL
     image_url = body.image_url
@@ -35,6 +40,8 @@ async def generate_video(
         raise ValidationError(detail="必须提供 image_url 或有效的 image_id")
 
     result = await generate_product_video(
+        db,
+        tenant_id=user.tenant_id,
         image_url=image_url,
         prompt=body.prompt,
         duration_seconds=body.duration,
@@ -66,14 +73,16 @@ async def generate_video(
 
 
 @router.get("/providers")
-async def list_providers(request: Request):
+async def list_providers(
+    request: Request,
+    user: UserInfo = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
     """列出可用视频生成提供商及预估成本"""
-    from app.config import settings
+    from app.services.provider_config_service import get_provider_config, provider_status
 
-    kling_configured = bool(
-        settings.KLING_API_KEY or (settings.KLING_ACCESS_KEY and settings.KLING_SECRET_KEY)
-    )
-    runway_configured = bool(settings.RUNWAY_API_KEY)
+    kling_status = provider_status(await get_provider_config(db, "kling", user.tenant_id))
+    runway_status = provider_status(await get_provider_config(db, "runway", user.tenant_id))
     return {
         "providers": [
             {
@@ -83,7 +92,7 @@ async def list_providers(request: Request):
                 "max_duration": "120s",
                 "max_resolution": "4K",
                 "strengths": ["中文文字渲染", "4K原生", "性价比最高"],
-                "status": "configured" if kling_configured else "unconfigured",
+                "status": kling_status,
             },
             {
                 "name": "Runway Gen-4.5",
@@ -92,7 +101,7 @@ async def list_providers(request: Request):
                 "max_duration": "18s",
                 "max_resolution": "1080p",
                 "strengths": ["相机运动控制", "电影级画质"],
-                "status": "configured" if runway_configured else "unconfigured",
+                "status": runway_status,
             },
             {
                 "name": "Sora 2",

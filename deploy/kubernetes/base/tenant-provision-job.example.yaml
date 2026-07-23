@@ -1,0 +1,48 @@
+# Copy this file to a protected deployment repository before use.
+# It is intentionally NOT included in kustomization.yaml and intentionally
+# omits --confirm, so applying the unedited template cannot write tenant data.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: shelook-provision-tenant
+  namespace: shelook
+  labels:
+    app.kubernetes.io/component: tenant-provisioning
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: provision-tenant
+          # Replace with the same immutable backend image used by the release.
+          image: registry.example.com/shelook/backend:REPLACE_WITH_RELEASE_TAG
+          command: ["python", "-m", "scripts.provision_tenant"]
+          args:
+            - "--tenant-id"
+            - "REPLACE_TENANT_ID"
+            - "--slug"
+            - "replace-tenant-slug"
+            - "--name"
+            - "REPLACE_TENANT_NAME"
+            - "--admin-identity-provider"
+            - "feishu"
+            - "--admin-subject"
+            - "REPLACE_OPEN_ID"
+            - "--admin-display-name"
+            - "REPLACE_ADMIN_DISPLAY_NAME"
+            # Deliberately omit --confirm. Add it only in the reviewed copy.
+          envFrom:
+            - configMapRef:
+                name: shelook-runtime-config
+            - secretRef:
+                name: shelook-runtime
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }

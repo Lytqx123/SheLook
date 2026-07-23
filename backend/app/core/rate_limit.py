@@ -41,13 +41,17 @@ class RateLimitMiddleware:
 
         # 健康检查不限制
         path = request.url.path
-        if path in ("/api/health", "/api/health/ready", "/metrics"):
+        if path in ("/api/health", "/api/health/live", "/api/health/ready", "/metrics"):
             await self.app(scope, receive, send)
             return
 
         client_ip = self._get_client_ip(request)
+        user = scope.get("state", {}).get("user")
+        tenant_id = getattr(user, "tenant_id", None)
+        request_limit = await self._get_request_limit(tenant_id)
+        rate_limit_key = f"rate_limit:{tenant_id or 'anonymous'}:{client_ip}"
 
-        is_limited, remaining = await self._check_rate_limit(client_ip)
+        is_limited, remaining = await self._check_rate_limit(rate_limit_key, request_limit)
 
         if is_limited:
             logger.warning(
@@ -60,7 +64,7 @@ class RateLimitMiddleware:
                 content={"detail": "请求过于频繁，请稍后重试"},
                 headers={
                     "Retry-After": str(self._window),
-                    "RateLimit-Limit": str(self._max_requests),
+                    "RateLimit-Limit": str(request_limit),
                     "RateLimit-Remaining": "0",
                     "RateLimit-Reset": str(self._window),
                 },
@@ -72,7 +76,7 @@ class RateLimitMiddleware:
             if message["type"] == "http.response.start":
                 headers = message.setdefault("headers", [])
                 headers.extend([
-                    [b"ratelimit-limit", str(self._max_requests).encode("ascii")],
+                    [b"ratelimit-limit", str(request_limit).encode("ascii")],
                     [b"ratelimit-remaining", str(remaining).encode("ascii")],
                     [b"ratelimit-reset", str(self._window).encode("ascii")],
                 ])
@@ -92,14 +96,35 @@ class RateLimitMiddleware:
                 return real_ip
         return host
 
-    async def _check_rate_limit(self, client_ip: str) -> tuple[bool, int]:
+    async def _get_request_limit(self, tenant_id: str | None) -> int:
+        """Read and briefly cache the tenant's request quota; fall back safely to global policy."""
+        if not tenant_id:
+            return self._max_requests
+        cache_key = f"tenant_quota:rpm:{tenant_id}"
+        try:
+            redis = await self._get_redis()
+            cached = await redis.get(cache_key)
+            if cached is not None:
+                return max(1, int(cached))
+
+            from app.db.session import async_session_factory
+            from app.models.organization import TenantQuota
+
+            async with async_session_factory() as db:
+                quota = await db.get(TenantQuota, tenant_id)
+            limit = quota.api_requests_per_minute if quota else self._max_requests
+            await redis.set(cache_key, limit, ex=60)
+            return max(1, int(limit))
+        except Exception as exc:
+            logger.warning("Tenant rate-limit quota lookup failed", tenant_id=tenant_id, error=str(exc))
+            return self._max_requests
+
+    async def _check_rate_limit(self, key: str, max_requests: int) -> tuple[bool, int]:
         """滑动窗口限流。返回 (是否触发限流, 剩余配额)"""
         try:
             redis = await self._get_redis()
             now = time.time()
             window_start = now - self._window
-            key = f"rate_limit:{client_ip}"
-
             member = f"{now}:{secrets.token_hex(6)}"
             # TODO: 这个 Lua 脚本后面可以考虑抽成常量或者放到配置里
             script = """
@@ -117,7 +142,7 @@ class RateLimitMiddleware:
                 1,
                 key,
                 window_start,
-                self._max_requests,
+                max_requests,
                 now,
                 member,
                 self._window * 2,
@@ -126,4 +151,4 @@ class RateLimitMiddleware:
         except Exception as e:
             # Redis 挂了就放行，别把正常流量拦了
             logger.error("速率限制检查失败，放行请求", error=str(e))
-            return False, self._max_requests
+            return False, max_requests

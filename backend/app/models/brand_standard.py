@@ -5,10 +5,10 @@ from datetime import datetime
 from sqlalchemy import JSON, Boolean, DateTime, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import Base
+from app.db.base import Base, TenantScopedMixin
 
 
-class BrandStandard(Base):
+class BrandStandard(TenantScopedMixin, Base):
     """品牌视觉规范库 —— 约束 AIGC 生成的色彩/构图/水印等"""
 
     __tablename__ = "brand_standards"

@@ -103,7 +103,7 @@ def sign_generated_asset(
     scheme_id: int | None = None,
 ) -> SignedAsset:
     """签名并嵌入 manifest store，签名后立即用 Reader 验证。
-    
+
     FIXME: callback_signer 的算法分支不够优雅，后续统一成 JOSE 格式。
     """
     if not settings.C2PA_ENABLED:
