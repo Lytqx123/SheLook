@@ -171,3 +171,7 @@ backend/.phase6-validation/
 *.p12
 *.jks
 secrets/
+
+# Public-preview HTTP basic-auth credentials and host-only Nginx gate.
+nginx/external-access/*.conf
+nginx/external-access/.htpasswd

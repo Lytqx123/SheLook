@@ -507,9 +507,14 @@ services:
     restart: unless-stopped
     init: true
     ports:
-      - "127.0.0.1:${NGINX_PORT:-80}:80"
+      # Keep loopback-only by default.  A controlled preview host can opt in to
+      # public binding with NGINX_HOST_BIND=0.0.0.0 and an access-gate include.
+      - "${NGINX_HOST_BIND:-127.0.0.1}:${NGINX_PORT:-80}:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # Empty by default.  A public preview host mounts a server-level basic
+      # auth include and its untracked password file here.
+      - ./nginx/external-access:/etc/nginx/external-access:ro
     depends_on:
       frontend:
         condition: service_healthy
